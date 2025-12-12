@@ -261,10 +261,10 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: 'Success'
+          content: '✅ <@&1385529547281403966> Deployment Succeeded!' 
+
           title: '✅ Skinalyze Backend - Deployment Successful!'
           description: |
-            <@&1385529547281403966>
-
             **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
             **📦 Repository:** Skinalyze Backend API
             **🌍 Environment:** ${{ steps.set_path.outputs.environment }}
@@ -295,10 +295,10 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: 'Failure'
+          content: '⚠️ <@&1385529547281403966> Deployment Failed!' 
+          
           title: '❌ Skinalyze Backend - Deployment Failed!'
           description: |
-            <@&1385529547281403966>
-
             **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
             **📦 Repository:** Skinalyze Backend API
             **🌍 Environment:** ${{ steps.set_path.outputs.environment }}
@@ -318,10 +318,10 @@ jobs:
             • [View Commit](${{ github.event.head_commit.url }})
 
             ${{ steps.deployment_info.outputs.rollback_occurred == 'true' && '✅ **Automatic rollback completed. Service should be operational.**' || '⚠️ **Please check the logs and fix the issue!**' }}
+          
           color: 0xFF0000
           username: Rice Shower
           avatar_url: https://media.tenor.com/KwkJpyhCtYoAAAAM/uma-musume-uma-musume-pretty-derby.gif
-
       - name: 📝 Get deployment logs
         if: failure()
         run: |
