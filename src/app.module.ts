@@ -117,7 +117,7 @@ import { Rating } from './ratings/entities/rating.entity';
         Specialization,
         ReturnRequest,
       ],
-      synchronize: process.env.NODE_ENV === 'development',
+      synchronize: true, // Auto-create tables (use migrations for production later)
       logging: process.env.NODE_ENV === 'development',
     }),
     UsersModule,
