@@ -29,13 +29,19 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: ${{ job.status }}
-          title: '🚀 Deployment Started'
+          title: '🚀 Skinalyze Backend - Deployment Started'
           description: |
-            **Branch:** `${{ github.ref_name }}`
-            **Commit:** `${{ github.event.head_commit.message }}`
-            **Author:** ${{ github.actor }}
-          color: 0xFFFF00
-          username: Con vk skinalyze
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+            **📦 Repository:** Skinalyze Backend API
+            **🌍 Environment:** Production
+            **🌿 Branch:** `${{ github.ref_name }}`
+            **💬 Commit:** ${{ github.event.head_commit.message }}
+            **👤 Triggered By:** ${{ github.actor }}
+            **⏱️ Started At:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+            ⚡ Deployment process initiated...
+          color: 0xFFA500
+          username: Skinalyze Deploy Bot
           avatar_url: https://res.cloudinary.com/dh2sxkvuu/image/upload/v1761827397/tyrant_wpum0x.jpg
 
       - name: 🔐 Setup SSH
@@ -59,7 +65,7 @@ jobs:
           script_stop: true
           script: |
             echo "📁 Navigating to project directory..."
-            cd /root/skinalyze
+            cd /root/skinalyze-be-v2
 
             echo "🔍 Checking current state..."
             git status
@@ -140,21 +146,29 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: 'Success'
-          title: '✅ Deployment Successful'
+          title: '✅ Skinalyze Backend - Deployment Successful!'
           description: |
-            **Branch:** `${{ github.ref_name }}`
-            **Commit:** `${{ github.event.head_commit.message }}`
-            **Author:** ${{ github.actor }}
-            **Deploy Time:** ${{ steps.deployment_info.outputs.deploy_time }}
-            **Health Check:** ✅ Passed
+            <@&1385529547281403966>
 
-            🔗 [View Commit](${{ github.event.head_commit.url }})
-            🌐 [API Swagger](https://api.nhatlonh.id.vn/api/docs)
-            🏥 [Health Check](https://api.nhatlonh.id.vn/health)
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+            **📦 Repository:** Skinalyze Backend API
+            **🌍 Environment:** Production
+            **🌿 Branch:** `${{ github.ref_name }}`
+            **💬 Commit:** ${{ github.event.head_commit.message }}
+            **👤 Deployed By:** ${{ github.actor }}
+            **⏱️ Deploy Time:** ${{ steps.deployment_info.outputs.deploy_time }}
+            **🏥 Health Check:** ✅ Passed
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 
-          message: '<@&1385529547281403966>'
+            **🔗 Quick Links:**
+            • [View Commit](${{ github.event.head_commit.url }})
+            • [API Documentation](https://api.nhatlonh.id.vn/api/docs)
+            • [Health Check](https://api.nhatlonh.id.vn/health)
+            • [View Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            🎉 **All services are running smoothly!**
           color: 0x00FF00
-          username: Con vk skinalyze
+          username: Skinalyze Deploy Bot
           avatar_url: https://res.cloudinary.com/dh2sxkvuu/image/upload/v1761827397/tyrant_wpum0x.jpg
 
       - name: ❌ Discord notification - Deployment failed
@@ -163,23 +177,32 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: 'Failure'
-          title: '❌ Deployment Failed'
+          title: '❌ Skinalyze Backend - Deployment Failed!'
           description: |
-            **Branch:** `${{ github.ref_name }}`
-            **Commit:** `${{ github.event.head_commit.message }}`
-            **Author:** ${{ github.actor }}
-            **Error:** Deployment or health check failed
+            <@&1385529547281403966>
 
-            🔗 [View Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            📋 [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+            **📦 Repository:** Skinalyze Backend API
+            **🌍 Environment:** Production
+            **🌿 Branch:** `${{ github.ref_name }}`
+            **💬 Commit:** ${{ github.event.head_commit.message }}
+            **👤 Triggered By:** ${{ github.actor }}
+            **⏱️ Failed At:** ${{ steps.deployment_info.outputs.deploy_time }}
+            **❌ Status:** Deployment or health check failed
+            **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 
-          message: '<@&1385529547281403966>'
+            **🔗 Troubleshooting Links:**
+            • [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            • [View Error Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            • [View Commit](${{ github.event.head_commit.url }})
+
+            ⚠️ **Please check the logs and fix the issue!**
           color: 0xFF0000
-          username: Con vk skinalyze
+          username: Skinalyze Deploy Bot
           avatar_url: https://res.cloudinary.com/dh2sxkvuu/image/upload/v1761827397/tyrant_wpum0x.jpg
 
       - name: 📝 Get deployment logs
         if: failure()
         run: |
           echo "Getting logs from failed deployment..."
-          ssh ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} "cd ${{ env.DEPLOY_PATH }} && docker-compose -f docker-compose.prod.yml logs --tail=100"
+          ssh ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} "cd ${{ env.DEPLOY_PATH }} && docker-compose logs --tail=100"
