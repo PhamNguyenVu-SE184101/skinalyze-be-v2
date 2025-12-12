@@ -8,17 +8,23 @@ import {
   HttpStatus,
   Logger,
   UseGuards,
+  Query,
+  Patch,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { SepayWebhookDto } from './dto/sepay-webhook.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/entities/user.entity';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 
 @ApiTags('Payments')
@@ -141,7 +147,106 @@ export class PaymentsController {
   }
 
   /**
-   * 📄 Get payment by code
+   * � Get all payments (Admin only)
+   */
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all payments (Admin/Staff only)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['pending', 'completed', 'failed', 'expired', 'refunded'],
+  })
+  @ApiQuery({
+    name: 'paymentType',
+    required: false,
+    enum: ['order', 'topup', 'withdraw', 'booking', 'subscription'],
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'All payments retrieved successfully',
+  })
+  async getAllPayments(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 50,
+    @Query('status') status?: string,
+    @Query('paymentType') paymentType?: string,
+  ) {
+    const result = await this.paymentsService.findAll(
+      page,
+      limit,
+      status,
+      paymentType,
+    );
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  /**
+   * � Get wallet transactions (TOPUP & WITHDRAW only)
+   */
+  @Get('wallet/transactions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get wallet transactions (TOPUP and WITHDRAW only)',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['pending', 'completed', 'failed', 'expired', 'refunded'],
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet transactions retrieved successfully',
+  })
+  async getWalletTransactions(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 50,
+    @Query('status') status?: string,
+  ) {
+    const result = await this.paymentsService.findWalletTransactions(
+      page,
+      limit,
+      status,
+    );
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  /**
+   * �💸 Refund payment (TOPUP only)
+   */
+  @Patch(':paymentCode/refund')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Refund a TOPUP payment (Admin/Staff only)' })
+  @ApiResponse({ status: 200, description: 'Payment refunded successfully' })
+  async refundPayment(@Param('paymentCode') paymentCode: string) {
+    const result = await this.paymentsService.refundTopupPayment(paymentCode);
+
+    return {
+      success: true,
+      message: 'Payment refunded successfully',
+      data: result,
+    };
+  }
+
+  /**
+   * �📄 Get payment by code
    */
   @Get(':paymentCode')
   @UseGuards(JwtAuthGuard)

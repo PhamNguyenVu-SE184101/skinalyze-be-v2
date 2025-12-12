@@ -9,7 +9,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, LessThan, Repository } from 'typeorm';
+import { EntityManager, LessThan, Repository, In } from 'typeorm';
 import {
   Payment,
   PaymentStatus,
@@ -32,6 +32,7 @@ import {
 import { CustomerSubscriptionService } from '../customer-subscription/customer-subscription.service';
 import { CustomerSubscription } from '../customer-subscription/entities/customer-subscription.entity';
 import { SlotStatus } from '../availability-slots/entities/availability-slot.entity';
+import { WithdrawalRequest, WithdrawalStatus } from '../withdrawals/entities/withdrawal-request.entity';
 
 interface PaymentProcessingResult {
   success: boolean;
@@ -877,6 +878,145 @@ export class PaymentsService {
     };
   }
 
+  /**
+   * Get all payments with pagination and filters (Admin only)
+   */
+  async findAll(
+    page: number = 1,
+    limit: number = 50,
+    status?: string,
+    paymentType?: string,
+  ): Promise<{
+    data: Payment[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
+    const where: any = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (paymentType) {
+      where.paymentType = paymentType;
+    }
+
+    const [payments, total] = await this.paymentRepository.findAndCount({
+      where,
+      relations: ['order', 'user', 'appointment', 'customerSubscription'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    return {
+      data: payments,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Get wallet transactions (TOPUP and WITHDRAW only)
+   */
+  async findWalletTransactions(
+    page: number = 1,
+    limit: number = 50,
+    status?: string,
+  ): Promise<{
+    data: Payment[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
+    const where: any = {
+      paymentType: In([PaymentType.TOPUP, PaymentType.WITHDRAW]),
+    };
+
+    if (status) {
+      where.status = status;
+    }
+
+    const [payments, total] = await this.paymentRepository.findAndCount({
+      where,
+      relations: ['user'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    return {
+      data: payments,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Refund TOPUP payment
+   */
+  async refundTopupPayment(paymentCode: string): Promise<Payment> {
+    return this.entityManager.transaction(async (manager) => {
+      const paymentRepo = manager.getRepository(Payment);
+
+      const payment = await paymentRepo.findOne({
+        where: { paymentCode },
+        relations: ['user'],
+      });
+
+      if (!payment) {
+        throw new NotFoundException(
+          `Payment with code ${paymentCode} not found`,
+        );
+      }
+
+      if (payment.paymentType !== PaymentType.TOPUP) {
+        throw new BadRequestException(
+          'Only TOPUP payments can be refunded through this endpoint',
+        );
+      }
+
+      if (payment.status !== PaymentStatus.COMPLETED) {
+        throw new BadRequestException(
+          `Cannot refund payment with status ${payment.status}. Only COMPLETED payments can be refunded.`,
+        );
+      }
+
+      if (!payment.user) {
+        throw new NotFoundException(
+          `User not found for payment ${paymentCode}`,
+        );
+      }
+
+      // Deduct from user wallet
+      const refundAmount = Number(payment.paidAmount);
+      await this.usersService.updateBalance(
+        payment.user.userId,
+        -refundAmount,
+        manager,
+      );
+
+      // Update payment status
+      payment.status = PaymentStatus.REFUNDED;
+      await paymentRepo.save(payment);
+
+      this.logger.log(
+        `💸 Refunded ${refundAmount} from User ${payment.user.userId} wallet for Payment ${paymentCode}`,
+      );
+
+      return payment;
+    });
+  }
+
   @Cron(CronExpression.EVERY_5_MINUTES)
   async cancelExpiredPayments(): Promise<number> {
     const expiredPayments = await this.paymentRepository.find({
@@ -884,7 +1024,7 @@ export class PaymentsService {
         status: PaymentStatus.PENDING,
         expiredAt: LessThan(new Date()),
       },
-      relations: ['order', 'appointment'],
+      relations: ['order', 'appointment', 'withdrawalRequest'],
     });
 
     if (expiredPayments.length === 0) {
@@ -917,6 +1057,25 @@ export class PaymentsService {
                 //   payment.order.orderId,
                 //   manager,
                 // );
+              }
+              break;
+
+            case PaymentType.WITHDRAW:
+              // 💰 Sync withdrawal status when payment expires
+              if (payment.withdrawalRequest) {
+                const withdrawalRepo = manager.getRepository(WithdrawalRequest);
+                const withdrawal = await withdrawalRepo.findOne({
+                  where: { requestId: payment.withdrawalRequest.requestId },
+                });
+
+                if (withdrawal && withdrawal.status === WithdrawalStatus.VERIFIED) {
+                  withdrawal.status = WithdrawalStatus.REJECTED;
+                  withdrawal.rejectionReason = 'Payment expired - no bank transfer received';
+                  await withdrawalRepo.save(withdrawal);
+                  this.logger.log(
+                    `🔄 Withdrawal ${withdrawal.requestId} marked as REJECTED due to payment expiration`,
+                  );
+                }
               }
               break;
 

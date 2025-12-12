@@ -12,6 +12,7 @@ import { Order } from '../../orders/entities/order.entity';
 import { Appointment } from '../../appointments/entities/appointment.entity';
 import { CustomerSubscription } from '../../customer-subscription/entities/customer-subscription.entity';
 import { User } from '../../users/entities/user.entity';
+import { WithdrawalRequest } from '../../withdrawals/entities/withdrawal-request.entity';
 
 export enum PaymentStatus {
   PENDING = 'pending',
@@ -29,7 +30,8 @@ export enum PaymentMethod {
 
 export enum PaymentType {
   ORDER = 'order',
-  TOPUP = 'topup', // Nạp tiền vào ví
+  TOPUP = 'topup',
+  WITHDRAW = 'withdraw',
   BOOKING = 'booking',
   SUBSCRIPTION = 'subscription',
 }
@@ -61,6 +63,9 @@ export class Payment {
 
   @Column({ type: 'varchar', length: 36, nullable: true })
   planId: string; // Plan ID cho subscription
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  withdrawalRequestId: string; // Withdrawal Request ID
 
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   amount: number; // Số tiền cần thanh toán
@@ -146,4 +151,8 @@ export class Payment {
 
   @OneToOne(() => CustomerSubscription, (subscription) => subscription.payment)
   customerSubscription: CustomerSubscription;
+
+  @OneToOne(() => WithdrawalRequest, (withdrawal) => withdrawal.payment)
+  @JoinColumn({ name: 'withdrawalRequestId' })
+  withdrawalRequest: WithdrawalRequest;
 }

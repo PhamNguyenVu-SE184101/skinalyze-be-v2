@@ -15,6 +15,12 @@ import { CreateWithdrawalRequestDto } from './dto/create-withdrawal-request.dto'
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { UpdateWithdrawalStatusDto } from './dto/update-withdrawal-status.dto';
 import { User } from '../users/entities/user.entity';
+import {
+  Payment,
+  PaymentStatus,
+  PaymentType,
+  PaymentMethod,
+} from '../payments/entities/payment.entity';
 import { EmailService } from '../email/email.service';
 
 @Injectable()
@@ -26,6 +32,8 @@ export class WithdrawalsService {
     private readonly otpSessionRepository: Repository<WithdrawalOtpSession>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
     private readonly emailService: EmailService,
   ) {}
 
@@ -44,7 +52,10 @@ export class WithdrawalsService {
     return `${visibleStart}${masked}${visibleEnd}`;
   }
 
-  private sanitizeRequest(request: WithdrawalRequest, skipCensoring = false): WithdrawalRequest {
+  private sanitizeRequest(
+    request: WithdrawalRequest,
+    skipCensoring = false,
+  ): WithdrawalRequest {
     if (request.accountNumber && !skipCensoring) {
       request.accountNumber = this.censorAccountNumber(request.accountNumber);
     }
@@ -54,7 +65,10 @@ export class WithdrawalsService {
   /**
    * 🔐 Bước 1: Request OTP
    */
-  async requestOTP(userId: string, requestOtpDto: RequestOtpDto): Promise<{ sessionId: string; otpCode?: string; message?: string }> {
+  async requestOTP(
+    userId: string,
+    requestOtpDto: RequestOtpDto,
+  ): Promise<{ sessionId: string; otpCode?: string; message?: string }> {
     const user = await this.userRepository.findOne({
       where: { userId },
     });
@@ -103,7 +117,8 @@ export class WithdrawalsService {
       return {
         sessionId: savedSession.sessionId,
         otpCode: otpCode, // Only in case email fails
-        message: 'Email service temporarily unavailable. Use the OTP code provided.',
+        message:
+          'Email service temporarily unavailable. Use the OTP code provided.',
       };
     }
   }
@@ -137,7 +152,9 @@ export class WithdrawalsService {
     }
 
     if (otpSession.otpExpiry < new Date()) {
-      throw new BadRequestException('OTP has expired. Please request a new one.');
+      throw new BadRequestException(
+        'OTP has expired. Please request a new one.',
+      );
     }
 
     if (otpSession.isVerified) {
@@ -148,7 +165,7 @@ export class WithdrawalsService {
     // Convert both to numbers for comparison (in case one is stored as string/decimal)
     if (Number(otpSession.amount) !== Number(createDto.amount)) {
       throw new BadRequestException(
-        `Amount does not match OTP request. Expected: ${otpSession.amount}, Got: ${createDto.amount}`
+        `Amount does not match OTP request. Expected: ${otpSession.amount}, Got: ${createDto.amount}`,
       );
     }
 
@@ -176,22 +193,40 @@ export class WithdrawalsService {
 
     const saved = await this.withdrawalRepository.save(request);
 
+    // 💰 Create payment record for withdrawal with PENDING status
+    const paymentCode = this.generateWithdrawalPaymentCode(saved.requestId);
+    const payment = this.paymentRepository.create({
+      paymentCode,
+      paymentType: PaymentType.WITHDRAW,
+      userId: user.userId,
+      withdrawalRequestId: saved.requestId, // Link to withdrawal request
+      amount: saved.amount,
+      paidAmount: 0, // Will be set when approved
+      paymentMethod: PaymentMethod.BANKING,
+      status: PaymentStatus.PENDING,
+      transferContent: `Withdrawal Request #${saved.requestId}`,
+    });
+    await this.paymentRepository.save(payment);
+
     return this.sanitizeRequest(saved);
   }
 
   async getMyRequests(userId: string): Promise<WithdrawalRequest[]> {
     const requests = await this.withdrawalRepository.find({
       where: { userId },
+      relations: ['payment'],
       order: { createdAt: 'DESC' },
     });
-    return requests.map(req => this.sanitizeRequest(req));
+    return requests.map((req) => this.sanitizeRequest(req));
   }
 
-  async getAllRequests(status?: WithdrawalStatus): Promise<WithdrawalRequest[]> {
+  async getAllRequests(
+    status?: WithdrawalStatus,
+  ): Promise<WithdrawalRequest[]> {
     const where = status ? { status } : {};
     const requests = await this.withdrawalRepository.find({
       where,
-      relations: ['user'],
+      relations: ['user', 'payment'],
       order: { createdAt: 'DESC' },
     });
     // Admins need to see full account numbers to process withdrawals
@@ -216,17 +251,15 @@ export class WithdrawalsService {
       updateDto.status === WithdrawalStatus.APPROVED &&
       request.status !== WithdrawalStatus.VERIFIED
     ) {
-      throw new BadRequestException(
-        'Request must be verified before approval',
-      );
+      throw new BadRequestException('Request must be verified before approval');
     }
 
     if (updateDto.status === WithdrawalStatus.APPROVED) {
       const user = request.user;
-      
+
       if (Number(user.balance) < Number(request.amount)) {
         throw new BadRequestException(
-          `User has insufficient balance. Current: ${user.balance} VND, Required: ${request.amount} VND`
+          `User has insufficient balance. Current: ${user.balance} VND, Required: ${request.amount} VND`,
         );
       }
 
@@ -235,10 +268,32 @@ export class WithdrawalsService {
 
       request.approvedAt = new Date();
       request.approvedBy = adminUserId;
+
+      // 💰 Update payment record to COMPLETED
+      const payment = await this.paymentRepository.findOne({
+        where: { withdrawalRequestId: request.requestId },
+      });
+
+      if (payment) {
+        payment.status = PaymentStatus.COMPLETED;
+        payment.paidAmount = request.amount;
+        payment.paidAt = new Date();
+        await this.paymentRepository.save(payment);
+      }
     }
 
     if (updateDto.status === WithdrawalStatus.REJECTED) {
       request.rejectionReason = updateDto.rejectionReason || null;
+
+      // 💰 Update payment record to FAILED when withdrawal is rejected
+      const payment = await this.paymentRepository.findOne({
+        where: { withdrawalRequestId: request.requestId },
+      });
+
+      if (payment) {
+        payment.status = PaymentStatus.FAILED;
+        await this.paymentRepository.save(payment);
+      }
     }
 
     if (updateDto.status === WithdrawalStatus.COMPLETED) {
@@ -283,5 +338,21 @@ export class WithdrawalsService {
 
     request.status = WithdrawalStatus.CANCELLED;
     await this.withdrawalRepository.save(request);
+
+    // 💰 Update payment record to FAILED when withdrawal is cancelled
+    const payment = await this.paymentRepository.findOne({
+      where: { withdrawalRequestId: request.requestId },
+    });
+
+    if (payment && payment.status === PaymentStatus.PENDING) {
+      payment.status = PaymentStatus.FAILED;
+      await this.paymentRepository.save(payment);
+    }
+  }
+
+  private generateWithdrawalPaymentCode(requestId: string): string {
+    const timestamp = Date.now().toString().slice(-6);
+    const idShort = requestId.replace(/-/g, '').slice(-8).toUpperCase();
+    return `SKW${idShort}${timestamp}`; // SKW = SKinalyze Withdrawal
   }
 }

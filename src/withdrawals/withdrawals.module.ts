@@ -4,12 +4,13 @@ import { WithdrawalsService } from './withdrawals.service';
 import { WithdrawalRequest } from './entities/withdrawal-request.entity';
 import { WithdrawalOtpSession } from './entities/withdrawal-otp-session.entity';
 import { User } from '../users/entities/user.entity';
+import { Payment } from '../payments/entities/payment.entity';
 import { EmailModule } from '../email/email.module';
 import { WithdrawalsController } from './withdrawals.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([WithdrawalRequest, WithdrawalOtpSession, User]),
+    TypeOrmModule.forFeature([WithdrawalRequest, WithdrawalOtpSession, User, Payment]),
     EmailModule,
   ],
   controllers: [WithdrawalsController],

@@ -6,8 +6,10 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  OneToOne,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { Payment } from '../../payments/entities/payment.entity';
 
 export enum WithdrawalType {
   WITHDRAW = 'withdraw',
@@ -88,4 +90,7 @@ export class WithdrawalRequest {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'approvedBy' })
   approver: User;
+
+  @OneToOne(() => Payment, (payment) => payment.withdrawalRequest, { nullable: true })
+  payment: Payment;
 }
