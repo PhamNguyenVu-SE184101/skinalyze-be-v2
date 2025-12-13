@@ -1043,6 +1043,189 @@ export class ShippingLogsService {
   }
 
   /**
+   * 🔄 Sync all GHN orders with their current status from GHN API
+   * This is a BACKUP mechanism when webhooks fail
+   * Called by the scheduler every 30 minutes
+   */
+  async syncOrdersWithGHN(): Promise<{
+    synced: number;
+    failed: number;
+    details: Array<{
+      orderId?: string;
+      ghnOrderCode: string;
+      oldStatus?: ShippingStatus;
+      newStatus?: ShippingStatus;
+      ghnStatus?: string;
+      error?: string;
+    }>;
+  }> {
+    this.logger.log('🔄 Starting GHN order synchronization...');
+
+    // Get all orders with GHN that are not completed/cancelled/returned
+    const pendingGhnOrders = await this.shippingLogRepository.find({
+      where: {
+        shippingMethod: ShippingMethod.GHN,
+        ghnOrderCode: Not(IsNull()),
+        status: In([
+          ShippingStatus.PENDING,
+          ShippingStatus.PICKED_UP,
+          ShippingStatus.IN_TRANSIT,
+          ShippingStatus.OUT_FOR_DELIVERY,
+        ]),
+      },
+      relations: ['order'],
+    });
+
+    if (pendingGhnOrders.length === 0) {
+      this.logger.log('✅ No GHN orders to sync');
+      return { synced: 0, failed: 0, details: [] };
+    }
+
+    this.logger.log(
+      `📦 Found ${pendingGhnOrders.length} GHN orders to sync with API`,
+    );
+
+    const results: {
+      synced: number;
+      failed: number;
+      details: Array<{
+        orderId?: string;
+        ghnOrderCode: string;
+        oldStatus?: ShippingStatus;
+        newStatus?: ShippingStatus;
+        ghnStatus?: string;
+        error?: string;
+      }>;
+    } = {
+      synced: 0,
+      failed: 0,
+      details: [],
+    };
+
+    for (const shippingLog of pendingGhnOrders) {
+      try {
+        if (!shippingLog.ghnOrderCode) {
+          this.logger.warn(
+            `Shipping log ${shippingLog.shippingLogId} has no GHN order code`,
+          );
+          continue;
+        }
+
+        // Fetch current status from GHN API
+        const ghnOrderInfo = await this.ghnService.getOrderInfo(
+          shippingLog.ghnOrderCode,
+        );
+
+        if (!ghnOrderInfo) {
+          this.logger.warn(
+            `No data returned from GHN for order ${shippingLog.ghnOrderCode}`,
+          );
+          results.failed++;
+          continue;
+        }
+
+        const ghnStatus = ghnOrderInfo.status;
+        const newStatus = this.mapGhnStatusToOrderStatus(ghnStatus);
+
+        // Only update if status has changed
+        if (newStatus !== shippingLog.status) {
+          this.logger.log(
+            `📝 Updating order ${shippingLog.order?.orderId}: ${shippingLog.status} -> ${newStatus} (GHN: ${ghnStatus})`,
+          );
+
+          const oldStatus = shippingLog.status;
+          shippingLog.status = newStatus;
+          shippingLog.note = `Auto-synced from GHN at ${new Date().toISOString()} - GHN Status: ${ghnStatus}`;
+
+          // Update delivery date if delivered
+          if (newStatus === ShippingStatus.DELIVERED && !shippingLog.deliveredDate) {
+            shippingLog.deliveredDate = new Date();
+          }
+
+          // Update return date if returned
+          if (newStatus === ShippingStatus.RETURNED && !shippingLog.returnedDate) {
+            shippingLog.returnedDate = new Date();
+          }
+
+          await this.shippingLogRepository.save(shippingLog);
+
+          // Sync order status
+          await this.syncOrderStatus(shippingLog.orderId, newStatus);
+
+          results.synced++;
+          results.details.push({
+            orderId: shippingLog.order?.orderId,
+            ghnOrderCode: shippingLog.ghnOrderCode,
+            oldStatus,
+            newStatus,
+            ghnStatus,
+          });
+        }
+      } catch (error) {
+        results.failed++;
+        this.logger.error(
+          `Failed to sync GHN order ${shippingLog.ghnOrderCode}: ${error.message}`,
+        );
+        results.details.push({
+          orderId: shippingLog.order?.orderId,
+          ghnOrderCode: shippingLog.ghnOrderCode,
+          error: error.message,
+        });
+      }
+    }
+
+    this.logger.log(
+      `✅ GHN sync completed: ${results.synced} synced, ${results.failed} failed`,
+    );
+
+    return results;
+  }
+
+  /**
+   * 🗺️ Map GHN status string to internal ShippingStatus enum
+   * @param ghnStatus - Raw status string from GHN API
+   * @returns ShippingStatus enum value
+   */
+  private mapGhnStatusToOrderStatus(ghnStatus: string): ShippingStatus {
+    switch (ghnStatus) {
+      case 'ready_to_pick':
+        return ShippingStatus.PENDING;
+
+      case 'picking':
+      case 'money_collect_picking':
+      case 'picked':
+      case 'storing':
+      case 'sorting':
+        return ShippingStatus.PICKED_UP;
+
+      case 'transporting':
+      case 'delivering':
+      case 'money_collect_delivering':
+        return ShippingStatus.IN_TRANSIT;
+
+      case 'delivered':
+        return ShippingStatus.DELIVERED;
+
+      case 'cancel':
+        return ShippingStatus.FAILED;
+
+      case 'delivery_fail':
+      case 'waiting_to_return':
+      case 'return':
+      case 'return_transporting':
+      case 'return_sorting':
+      case 'returning':
+      case 'return_fail':
+      case 'returned':
+        return ShippingStatus.RETURNED;
+
+      default:
+        this.logger.warn(`Unknown GHN status: ${ghnStatus}, defaulting to PICKED_UP`);
+        return ShippingStatus.PICKED_UP;
+    }
+  }
+
+  /**
    * 🤖 Auto-assign shipping logs to random staff after 24 hours
    * This method is called by the scheduler
    */

@@ -702,4 +702,64 @@ export class ShippingLogsController {
     );
     return ResponseHelper.success('Shipping tracking info', tracking);
   }
+
+  /**
+   * 🔄 Manually sync GHN orders (Admin only)
+   * Triggers immediate synchronization of all active GHN orders
+   * Useful for testing or when you need to force an immediate sync
+   */
+  @Post('ghn/sync')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Manually sync GHN order statuses (Admin only)',
+    description:
+      'Triggers immediate synchronization of all active GHN orders with GHN API. ' +
+      'This is a backup mechanism when webhooks fail. Normally runs automatically every 10 minutes.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'GHN sync completed successfully',
+    schema: {
+      example: {
+        statusCode: 200,
+        message: 'GHN sync completed: 5 synced, 0 failed',
+        data: {
+          synced: 5,
+          failed: 0,
+          details: [
+            {
+              orderId: '550e8400-e29b-41d4-a716-446655440000',
+              ghnOrderCode: 'GHNABC123',
+              oldStatus: 'PICKED_UP',
+              newStatus: 'IN_TRANSIT',
+              ghnStatus: 'transporting',
+            },
+            {
+              orderId: '660e8400-e29b-41d4-a716-446655440001',
+              ghnOrderCode: 'GHNABC124',
+              oldStatus: 'IN_TRANSIT',
+              newStatus: 'DELIVERED',
+              ghnStatus: 'delivered',
+            },
+          ],
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin role required',
+  })
+  async manualSyncGhn() {
+    const result = await this.shippingLogsService.syncOrdersWithGHN();
+
+    const message =
+      result.synced === 0 && result.failed === 0
+        ? 'No GHN orders to sync'
+        : `GHN sync completed: ${result.synced} synced, ${result.failed} failed`;
+
+    return ResponseHelper.success(message, result);
+  }
 }
