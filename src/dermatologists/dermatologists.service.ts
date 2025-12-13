@@ -79,7 +79,7 @@ export class DermatologistsService {
       });
       if (!dermatologist) {
         throw new NotFoundException(
-          `Dermatologist with ID ${dermaId} not found 33`,
+          `Dermatologist with ID ${dermaId} not found`,
         );
       }
 

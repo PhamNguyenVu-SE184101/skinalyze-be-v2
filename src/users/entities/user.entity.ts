@@ -33,7 +33,6 @@ export class User {
   fullName: string;
 
   @Column('decimal', { precision: 10, scale: 2, default: 0 })
-  @Exclude()
   balance: number;
 
   @Column({ type: 'date', nullable: true })
