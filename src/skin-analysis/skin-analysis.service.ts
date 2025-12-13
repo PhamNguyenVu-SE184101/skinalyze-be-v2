@@ -81,10 +81,12 @@ export class SkinAnalysisService {
     throw new HttpException('Internal Error', HttpStatus.INTERNAL_SERVER_ERROR);
   }
 
+  // ✅ 1. Validate Customer & Load User Profile
   private async validateCustomer(customerId: string): Promise<Customer> {
     try {
       const customer = await this.customerRepository.findOne({
         where: { customerId },
+        relations: ['user'], // Eager load User entity
       });
       if (!customer) {
         throw new NotFoundException(`Customer ID ${customerId} not found`);
@@ -96,16 +98,32 @@ export class SkinAnalysisService {
     }
   }
 
+  // ✅ 2. Calculate Age Helper
+  private calculateAge(dob: string | Date | null): number | null {
+    if (!dob) return null;
+    
+    const birthDate = new Date(dob);
+    const today = new Date();
+    
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    
+    return age > 0 ? age : null;
+  }
+
   private async uploadBase64ToCloudinary(
     base64String: string,
     folder: string,
   ): Promise<string | null> {
     try {
-      // Remove header if present (e.g., "data:image/png;base64,")
+      // Remove header if present
       const base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
       const buffer = Buffer.from(base64Data, 'base64');
 
-      // Create a mock file object compatible with CloudinaryService.uploadImage
       const mockFile: any = {
         buffer: buffer,
         originalname: `mask_${Date.now()}.png`,
@@ -123,17 +141,20 @@ export class SkinAnalysisService {
     }
   }
 
-  private async findProductIdsByNames(
-    productNames: string[],
-  ): Promise<string[]> {
-    if (!productNames || productNames.length === 0) {
+  // ✅ 3. NEW: Match Products & Return { productId, reason }
+  private async matchProductsWithReasons(
+    suggestions: { product_name: string; reason: string }[],
+  ): Promise<{ productId: string; reason: string }[]> {
+    if (!suggestions || suggestions.length === 0) {
       return [];
     }
 
-    try {
-      this.logger.debug(`Searching for products: ${productNames.join(', ')}`);
+    const productNames = suggestions.map((s) => s.product_name);
 
-      // Search for products by name (case-insensitive, partial match)
+    try {
+      this.logger.debug(`Matching products for: ${productNames.join(', ')}`);
+
+      // Search DB for products matching names
       const products = await this.productRepository
         .createQueryBuilder('product')
         .where(
@@ -148,23 +169,38 @@ export class SkinAnalysisService {
             return acc;
           }, {}),
         )
+        .select(['product.productId', 'product.productName']) // Only select necessary fields
         .getMany();
 
-      const foundProductIds = products.map((product) => product.productId);
+      const matchedResults: { productId: string; reason: string }[] = [];
 
-      this.logger.debug(
-        `Found ${foundProductIds.length} products: ${foundProductIds.join(', ')}`,
-      );
-
-      if (foundProductIds.length === 0) {
-        this.logger.warn(
-          `No products found for names: ${productNames.join(', ')}`,
+      for (const suggestion of suggestions) {
+        // Find DB product that matches AI suggestion
+        const match = products.find(
+          (p) =>
+            p.productName
+              .toLowerCase()
+              .includes(suggestion.product_name.toLowerCase()) ||
+            suggestion.product_name
+              .toLowerCase()
+              .includes(p.productName.toLowerCase()),
         );
+
+        if (match) {
+          // ✅ Construct object with ONLY productId and reason
+          matchedResults.push({
+            productId: match.productId,
+            reason: suggestion.reason,
+          });
+        }
       }
 
-      return foundProductIds;
+      this.logger.debug(
+        `Matched ${matchedResults.length} products with reasons.`,
+      );
+      return matchedResults;
     } catch (error) {
-      this.logger.error('Error finding products by names:', error);
+      this.logger.error('Error matching products with reasons:', error);
       return [];
     }
   }
@@ -186,12 +222,32 @@ export class SkinAnalysisService {
     }
   }
 
-  async classifyDisease(file: Express.Multer.File, notes?: string) {
+  // ✅ 4. Updated: Pass metadata to FastAPI
+  async classifyDisease(
+    file: Express.Multer.File,
+    notes?: string,
+    age?: number,
+    gender?: string,
+    allergies?: string,
+  ) {
     try {
       const formData = this.createFormData(file);
-      if (notes) {
-        formData.append('notes', notes);
+
+      if (notes) formData.append('notes', notes);
+
+      // Append personalization parameters
+      if (age !== null && age !== undefined) {
+        formData.append('age', age.toString());
       }
+
+      if (gender) {
+        formData.append('gender', gender);
+      }
+
+      if (allergies) {
+        formData.append('allergies', allergies);
+      }
+
       const response = await axios.post(
         `${this.aiServiceUrl}/api/classification-disease`,
         formData,
@@ -211,7 +267,7 @@ export class SkinAnalysisService {
         formData,
         { headers: { ...formData.getHeaders() } },
       );
-      return response.data; // Returns { mask: "base64...", lesion_on_black: "base64..." }
+      return response.data;
     } catch (error) {
       this.handleAxiosError(error, 'segmentation');
     }
@@ -273,7 +329,25 @@ export class SkinAnalysisService {
     notes?: string,
   ): Promise<SkinAnalysis> {
     this.logger.log(`Starting disease detection for: ${customerId}`);
-    await this.validateCustomer(customerId);
+
+    // ✅ 5. Get User Context
+    const customer = await this.validateCustomer(customerId);
+    const user = customer.user;
+
+    const age = this.calculateAge(user.dob);
+
+    let genderStr = 'Other';
+    if (user.gender === true) genderStr = 'Male';
+    else if (user.gender === false) genderStr = 'Female';
+
+    const allergiesStr =
+      user.allergies && Array.isArray(user.allergies)
+        ? user.allergies.join(', ')
+        : '';
+
+    this.logger.debug(
+      `User Context: Age=${age}, Gender=${genderStr}, Allergies=${allergiesStr}`,
+    );
 
     if (notes === 'facial') {
       const hasFace = await this.detectFace(file);
@@ -284,25 +358,24 @@ export class SkinAnalysisService {
       }
     }
 
-    // 1. Upload Original Image
+    // 6. Upload Image
     const uploadResult = await this.cloudinaryService.uploadImage(
       file,
       'skin-analysis/disease-detection',
     );
     const imageUrl = uploadResult.secure_url;
 
-    // 2. Run AI Analysis
+    // 7. Run AI Analysis
     const [classificationResult, segmentationResult] = await Promise.all([
-      this.classifyDisease(file, notes),
+      this.classifyDisease(file, notes, age as number, genderStr, allergiesStr), // ✅ Pass metadata
       this.segmentDisease(file),
     ]);
 
-    // Log AI response to debug
     this.logger.debug(
       `AI Classification Response: ${JSON.stringify(classificationResult)}`,
     );
 
-    // 3. Process Mask
+    // 8. Process Mask
     let maskUrls: string[] | null = null;
     if (segmentationResult?.mask) {
       this.logger.debug('Uploading segmentation mask to Cloudinary...');
@@ -315,44 +388,35 @@ export class SkinAnalysisService {
       }
     }
 
-    // 4. Find product IDs from product suggestions
-    let recommendedProductIds: string[] | null = null;
+    // ✅ 9. Process Products and Reasons
+    let recommendedProductsData: any = null;
+
     if (
       classificationResult.product_suggestions &&
       Array.isArray(classificationResult.product_suggestions) &&
       classificationResult.product_suggestions.length > 0
     ) {
-      this.logger.debug(
-        `Product suggestions from AI: ${JSON.stringify(classificationResult.product_suggestions)}`,
-      );
-      recommendedProductIds = await this.findProductIdsByNames(
+      // classificationResult.product_suggestions is [{ product_name, reason }]
+      recommendedProductsData = await this.matchProductsWithReasons(
         classificationResult.product_suggestions,
       );
-
-      if (recommendedProductIds.length === 0) {
-        recommendedProductIds = null;
-      }
     }
 
-    // 5. Map disease to skin conditions
+    // 10. Map Disease
     const detectedDisease = classificationResult.predicted_class;
     const skinConditions = this.mapDiseaseToConditions(detectedDisease);
 
-    this.logger.debug(
-      `Mapped disease "${detectedDisease}" to conditions: ${JSON.stringify(skinConditions)}`,
-    );
-
-    // 6. Save to DB with all predictions, product IDs, and skin conditions
+    // 11. Save to DB
     const skinAnalysisData: DeepPartial<SkinAnalysis> = {
       customerId,
       source: 'AI_SCAN',
       imageUrls: [imageUrl],
       notes: notes ?? null,
       aiDetectedDisease: detectedDisease,
-      aiDetectedCondition: skinConditions ? skinConditions.join(', ') : null, // Store as comma-separated string
+      aiDetectedCondition: skinConditions ? skinConditions.join(', ') : null,
       confidence: classificationResult.confidence,
       allPredictions: classificationResult.all_predictions,
-      aiRecommendedProducts: recommendedProductIds,
+      aiRecommendedProducts: recommendedProductsData, // ✅ Saves [{productId, reason}, ...]
       mask: maskUrls,
     };
 
@@ -360,12 +424,6 @@ export class SkinAnalysisService {
     const savedAnalysis = await this.skinAnalysisRepository.save(entity);
 
     this.logger.log(`Disease analysis completed: ${savedAnalysis.analysisId}`);
-    this.logger.log(
-      `Recommended product IDs: ${JSON.stringify(savedAnalysis.aiRecommendedProducts)}`,
-    );
-    this.logger.log(
-      `Detected conditions: ${savedAnalysis.aiDetectedCondition}`,
-    );
 
     return savedAnalysis;
   }
@@ -398,26 +456,19 @@ export class SkinAnalysisService {
     });
   }
 
-  /**
-   * Maps the detected disease to possible skin conditions/types
-   * @param disease - The AI detected disease (e.g., "Acne", "Tinea", "Normal")
-   * @returns Array of possible skin conditions or null if no mapping found
-   */
   private mapDiseaseToConditions(disease: string | null): string[] | null {
     if (!disease) {
       return null;
     }
 
-    // Normalize the disease name: lowercase and replace spaces with underscores
     const normalizedDisease = disease.toLowerCase().replace(/\s+/g, '_');
 
-    // Try to find exact match first
     if (this.DISEASE_TO_SKIN_TYPES[normalizedDisease]) {
       return this.DISEASE_TO_SKIN_TYPES[normalizedDisease];
     }
 
-    // Try partial match for cases like "Seborrh_Keratoses" vs "seborrheic_keratoses"
-    for (const [key, conditions] of Object.entries(this.DISEASE_TO_SKIN_TYPES)) {
+    for (const [key, conditions] of
+      Object.entries(this.DISEASE_TO_SKIN_TYPES)) {
       if (
         normalizedDisease.includes(key) ||
         key.includes(normalizedDisease) ||
