@@ -15,7 +15,7 @@ import { Appointment } from '../../appointments/entities/appointment.entity';
 import { SubscriptionPlan } from '../../subscription-plans/entities/subscription-plan.entity';
 import { AvailabilitySlot } from '../../availability-slots/entities/availability-slot.entity';
 import { Specialization } from '../../specializations/entities/specialization.entity';
-import { Rating } from 'src/ratings/entities/rating.entity';
+import { Rating } from '../../ratings/entities/rating.entity';
 
 @Entity('dermatologists')
 export class Dermatologist {

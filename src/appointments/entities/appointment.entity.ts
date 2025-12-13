@@ -20,7 +20,7 @@ import {
   AppointmentType,
   TerminationReason,
 } from '../types/appointment.types';
-import { Rating } from 'src/ratings/entities/rating.entity';
+import { Rating } from '../../ratings/entities/rating.entity';
 
 @Entity('appointments')
 export class Appointment {

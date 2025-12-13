@@ -212,6 +212,24 @@ export class ShippingLogsService {
   }
 
   /**
+   * 🔍 Find shipping log by GHN order code
+   * Used for webhook status updates from GHN
+   */
+  async findByGhnOrderCode(ghnOrderCode: string): Promise<ShippingLog | null> {
+    const log = await this.shippingLogRepository.findOne({
+      where: { ghnOrderCode },
+      relations: [
+        'order',
+        'order.customer',
+        'order.customer.user',
+        'shippingStaff',
+      ],
+    });
+
+    return log;
+  }
+
+  /**
    * 🤝 Staff tự nhận đơn hàng (self-assign)
    */
   async assignToMe(

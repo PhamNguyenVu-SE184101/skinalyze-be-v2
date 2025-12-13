@@ -33,6 +33,7 @@ import {
 } from '../shipping-logs/entities/shipping-log.entity';
 import { GhnService } from '../ghn/ghn.service';
 import { GhnRequiredNote } from '../ghn/dto/create-ghn-order.dto';
+import { mapGhnStatusToEnum } from './utils/ghn-status-mapper.util';
 
 @Injectable()
 export class OrdersService {
@@ -1021,5 +1022,117 @@ export class OrdersService {
     }
 
     return savedOrder;
+  }
+
+  /**
+   * 🚚 UPDATE ORDER STATUS FROM GHN WEBHOOK
+   * Maps GHN status to internal OrderStatus and updates the order
+   *
+   * @param ghnOrderCode - GHN tracking order code
+   * @param ghnStatus - Raw status string from GHN webhook
+   * @returns Updated order with new status
+   */
+  async updateOrderStatusFromGhn(
+    ghnOrderCode: string,
+    ghnStatus: string,
+  ): Promise<Order> {
+    this.logger.log(
+      `📦 Updating order status from GHN: ${ghnOrderCode} -> ${ghnStatus}`,
+    );
+
+    // Find shipping log by GHN order code
+    const shippingLog = await this.shippingLogsService.findByGhnOrderCode(
+      ghnOrderCode,
+    );
+
+    if (!shippingLog) {
+      throw new NotFoundException(
+        `Shipping log not found for GHN order code: ${ghnOrderCode}`,
+      );
+    }
+
+    // Find the order
+    const order = await this.findOne(shippingLog.orderId);
+
+    // Map GHN status to internal OrderStatus enum
+    const newOrderStatus = mapGhnStatusToEnum(ghnStatus);
+
+    this.logger.log(
+      `📊 Mapped GHN status "${ghnStatus}" -> OrderStatus.${newOrderStatus}`,
+    );
+
+    // Update order status
+    const previousStatus = order.status;
+    order.status = newOrderStatus;
+
+    const updatedOrder = await this.orderRepository.save(order);
+
+    this.logger.log(
+      `✅ Order ${order.orderId} status updated: ${previousStatus} -> ${newOrderStatus}`,
+    );
+
+    // Send notification to customer about status change
+    const userId = order.customer?.user?.userId;
+    if (userId) {
+      try {
+        const statusMessages: Record<OrderStatus, { title: string; message: string }> = {
+          [OrderStatus.PENDING]: {
+            title: '⏳ Đơn hàng đang chờ xử lý',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đang được xử lý.`,
+          },
+          [OrderStatus.CONFIRMED]: {
+            title: '✅ Đơn hàng đã được xác nhận',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đã được xác nhận và đang chuẩn bị.`,
+          },
+          [OrderStatus.PROCESSING]: {
+            title: '📦 Đơn hàng đang được xử lý',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đang được đóng gói và chuẩn bị giao.`,
+          },
+          [OrderStatus.SHIPPING]: {
+            title: '🚚 Đơn hàng đang được giao',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đang trên đường giao đến bạn! Mã vận đơn GHN: ${ghnOrderCode}`,
+          },
+          [OrderStatus.DELIVERED]: {
+            title: '🎉 Đơn hàng đã được giao',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đã được giao thành công. Cảm ơn bạn đã mua hàng!`,
+          },
+          [OrderStatus.COMPLETED]: {
+            title: '✅ Đơn hàng hoàn tất',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đã hoàn tất.`,
+          },
+          [OrderStatus.CANCELLED]: {
+            title: '❌ Đơn hàng đã bị hủy',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} đã bị hủy.`,
+          },
+          [OrderStatus.REJECTED]: {
+            title: '⚠️ Đơn hàng giao thất bại',
+            message: `Đơn hàng #${order.orderId.slice(0, 8)} giao không thành công và đang được hoàn trả. Vui lòng liên hệ CSKH để biết thêm chi tiết.`,
+          },
+        };
+
+        const notificationContent = statusMessages[newOrderStatus];
+
+        await this.notificationsService.create({
+          userId: userId,
+          type: NotificationType.ORDER,
+          title: notificationContent.title,
+          message: notificationContent.message,
+          data: {
+            orderId: order.orderId,
+            status: newOrderStatus,
+            ghnOrderCode: ghnOrderCode,
+            ghnStatus: ghnStatus,
+          },
+        });
+
+        this.logger.log(`📧 Notification sent to user ${userId}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to send status update notification: ${error.message}`,
+        );
+      }
+    }
+
+    return updatedOrder;
   }
 }

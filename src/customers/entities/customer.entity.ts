@@ -13,7 +13,7 @@ import { User } from '../../users/entities/user.entity';
 import { TreatmentRoutine } from '../../treatment-routines/entities/treatment-routine.entity';
 import { Appointment } from '../../appointments/entities/appointment.entity';
 import { SkinAnalysis } from '../../skin-analysis/entities/skin-analysis.entity';
-import { Rating } from 'src/ratings/entities/rating.entity';
+import { Rating } from '../../ratings/entities/rating.entity';
 
 @Entity('customers')
 export class Customer {
