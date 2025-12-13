@@ -928,6 +928,7 @@ export class PaymentsService {
     page: number = 1,
     limit: number = 50,
     status?: string,
+    userId?: string,
   ): Promise<{
     data: Payment[];
     total: number;
@@ -942,6 +943,10 @@ export class PaymentsService {
 
     if (status) {
       where.status = status;
+    }
+
+    if (userId) {
+      where.user = { userId };
     }
 
     const [payments, total] = await this.paymentRepository.findAndCount({

@@ -110,7 +110,7 @@ export class GhnWebhookController {
     this.logger.debug(`Full payload: ${JSON.stringify(payload, null, 2)}`);
 
     try {
-      const { OrderCode, Status, StatusText } = payload;
+      const { OrderCode, Status, Description, Warehouse } = payload;
 
       // Validate required fields
       if (!OrderCode || !Status) {
@@ -140,7 +140,8 @@ export class GhnWebhookController {
           newStatus: updatedOrder.status,
           ghnOrderCode: OrderCode,
           ghnStatus: Status,
-          ghnStatusText: StatusText,
+          description: Description,
+          warehouse: Warehouse,
           updatedAt: new Date().toISOString(),
         },
       };

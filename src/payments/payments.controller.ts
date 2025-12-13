@@ -10,6 +10,7 @@ import {
   UseGuards,
   Query,
   Patch,
+  Req,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { SepayWebhookDto } from './dto/sepay-webhook.dto';
@@ -196,7 +197,8 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Get wallet transactions (TOPUP and WITHDRAW only)',
+    summary: 'Get my wallet transactions (TOPUP and WITHDRAW only)',
+    description: 'Returns only the authenticated user\'s wallet transactions',
   })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -210,14 +212,18 @@ export class PaymentsController {
     description: 'Wallet transactions retrieved successfully',
   })
   async getWalletTransactions(
+    @Req() req,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 50,
     @Query('status') status?: string,
   ) {
+    const userId = req.user.userId;
+
     const result = await this.paymentsService.findWalletTransactions(
       page,
       limit,
       status,
+      userId, // Pass userId to filter by current user
     );
 
     return {
