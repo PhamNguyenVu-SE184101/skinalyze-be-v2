@@ -21,6 +21,7 @@ import {
   ShippingStatus,
 } from '../shipping-logs/entities/shipping-log.entity';
 import { Customer } from '../customers/entities/customer.entity';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class ReturnRequestsService {
@@ -77,6 +78,7 @@ export class ReturnRequestsService {
     private shippingLogRepository: Repository<ShippingLog>,
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
+    private cloudinaryService: CloudinaryService,
   ) {}
 
   async create(
@@ -379,6 +381,48 @@ export class ReturnRequestsService {
     );
 
     returnRequest.status = ReturnRequestStatus.CANCELLED;
+    return this.returnRequestRepository.save(returnRequest);
+  }
+
+  async uploadCompletionPhotos(
+    id: string,
+    files: Express.Multer.File[],
+    staffId: string,
+  ) {
+    const returnRequest = await this.returnRequestRepository.findOne({
+      where: { returnRequestId: id },
+      relations: ['assignedStaff'],
+    });
+
+    if (!returnRequest) {
+      throw new NotFoundException('Return request not found');
+    }
+
+    if (returnRequest.status !== ReturnRequestStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        'Can only upload completion photos for completed returns',
+      );
+    }
+
+    if (returnRequest.assignedStaffId !== staffId) {
+      throw new ForbiddenException(
+        'Only assigned staff can upload completion photos',
+      );
+    }
+
+    // Upload files to Cloudinary
+    const uploadResults = await this.cloudinaryService.uploadMultipleImages(
+      files,
+      'return-completion-photos',
+    );
+
+    const photoUrls = uploadResults.map((result) => result.secure_url);
+
+    returnRequest.returnCompletionPhotos = [
+      ...(returnRequest.returnCompletionPhotos || []),
+      ...photoUrls,
+    ];
+
     return this.returnRequestRepository.save(returnRequest);
   }
 

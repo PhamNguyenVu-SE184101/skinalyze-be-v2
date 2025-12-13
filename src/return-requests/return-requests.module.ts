@@ -6,10 +6,12 @@ import { ReturnRequest } from './entities/return-request.entity';
 import { Order } from '../orders/entities/order.entity';
 import { ShippingLog } from '../shipping-logs/entities/shipping-log.entity';
 import { Customer } from '../customers/entities/customer.entity';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ReturnRequest, Order, ShippingLog, Customer]),
+    CloudinaryModule,
   ],
   controllers: [ReturnRequestsController],
   providers: [ReturnRequestsService],

@@ -10,13 +10,19 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFiles,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiTags,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { ReturnRequestsService } from './return-requests.service';
 import { CreateReturnRequestDto } from './dto/create-return-request.dto';
 import {
@@ -182,6 +188,58 @@ export class ReturnRequestsController {
     return ResponseHelper.success(
       'Return request cancelled successfully',
       data,
+    );
+  }
+
+  @Post(':id/upload-completion-photos')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.STAFF)
+  @ApiBearerAuth()
+  @UseInterceptors(FilesInterceptor('photos', 10)) // Max 10 ảnh
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: '📸 Upload return completion proof photos',
+    description:
+      'Staff uploads proof photos when completing return (1-10 photos)',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        photos: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description: 'Return completion proof photos (1-10 images)',
+        },
+      },
+    },
+  })
+  async uploadCompletionPhotos(
+    @Param('id') id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Request() req,
+  ) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('Please upload at least 1 photo');
+    }
+
+    if (files.length > 10) {
+      throw new BadRequestException('Maximum 10 photos allowed');
+    }
+
+    const staffId = req.user.userId;
+    const result = await this.returnRequestsService.uploadCompletionPhotos(
+      id,
+      files,
+      staffId,
+    );
+
+    return ResponseHelper.success(
+      'Return completion photos uploaded successfully',
+      result,
     );
   }
 
