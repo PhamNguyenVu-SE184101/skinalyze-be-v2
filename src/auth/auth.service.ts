@@ -99,6 +99,7 @@ export class AuthService {
       phone: registerDto.phone,
       dob: registerDto.dob,
       photoUrl: registerDto.photoUrl,
+      gender: registerDto.gender,  // Add this line to include gender
       role: registerDto.role || UserRole.CUSTOMER, // Default to CUSTOMER if not provided
     };
 

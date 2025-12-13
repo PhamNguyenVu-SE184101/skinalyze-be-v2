@@ -7,6 +7,7 @@ import {
   IsUrl,
   IsEnum,
   IsNumber,
+  IsBoolean,  // Add this import for boolean validation
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../../users/entities/user.entity';
@@ -136,4 +137,13 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   wardCode?: string;
+
+  @ApiProperty({
+    description: 'User gender (optional) - true for Male, false for Female',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  gender?: boolean;
 }
