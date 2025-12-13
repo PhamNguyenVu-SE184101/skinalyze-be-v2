@@ -55,6 +55,11 @@ export class CreateUserDto {
   address?: string[];
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allergies?: string[];
+
+  @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
 

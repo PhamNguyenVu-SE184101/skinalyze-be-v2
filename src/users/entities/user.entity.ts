@@ -48,6 +48,9 @@ export class User {
   @Column({ nullable: true })
   gender: boolean; // true: Male, false : Female
 
+  @Column('simple-array', { nullable: true })
+  allergies: string[];
+
   @Column({
     type: 'enum',
     enum: UserRole,
