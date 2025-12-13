@@ -60,7 +60,7 @@ export class ShippingLogsScheduler {
    * This acts as a safety net to catch any status updates that were missed
    * due to webhook failures or network issues.
    */
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron(CronExpression.EVERY_30_MINUTES)
   async syncGhnOrderStatuses() {
     this.logger.log('🔄 Running Cron: Syncing GHN order statuses...');
 
