@@ -52,6 +52,7 @@ export class AuthController {
           phone: '+84901234567',
           dob: '1990-01-15',
           photoUrl: 'https://example.com/photos/john.jpg',
+          gender: true, // Add this to the example (true for Male)
           street: '123 Nguyen Hue Street',
           streetLine1: 'Building A, Floor 5',
           streetLine2: 'Apartment 502',
@@ -66,6 +67,7 @@ export class AuthController {
           email: 'jane.smith@example.com',
           password: 'SecurePassword456!',
           fullName: 'Jane Smith',
+          gender: false, // Add this to the example (false for Female)
           street: '456 Le Loi Boulevard',
           wardOrSubDistrict: 'Ben Thanh Ward',
           district: 'District 1',
