@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { GhnWebhookController } from './webhooks/ghn-webhook.controller';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Payment } from '../payments/entities/payment.entity';
@@ -26,7 +27,7 @@ import { GhnModule } from '../ghn/ghn.module';
     ShippingLogsModule,
     GhnModule,
   ],
-  controllers: [OrdersController],
+  controllers: [OrdersController, GhnWebhookController],
   providers: [OrdersService],
   exports: [OrdersService],
 })
