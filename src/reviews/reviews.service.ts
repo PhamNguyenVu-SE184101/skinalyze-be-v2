@@ -183,6 +183,68 @@ export class ReviewsService {
     );
   }
 
+  async getReviewableProductsByOrder(userId: string, orderId: string) {
+    // Find the order and verify it belongs to the user
+    const order = await this.orderRepository.findOne({
+      where: { orderId },
+      relations: ['customer', 'customer.user', 'orderItems', 'orderItems.product'],
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${orderId} not found`);
+    }
+
+    // Check if order belongs to the user
+    if (order.customer?.user?.userId !== userId) {
+      throw new ForbiddenException('You can only view your own orders');
+    }
+
+    // Check if order is delivered or completed
+    if (order.status !== 'DELIVERED' && order.status !== 'COMPLETED') {
+      throw new BadRequestException(
+        'You can only review products from delivered or completed orders',
+      );
+    }
+
+    // Get all products from the order
+    const productIds = order.orderItems.map((item) => item.productId);
+
+    // Get existing reviews for these products by this user
+    const existingReviews = await this.reviewRepository.find({
+      where: {
+        userId,
+        productId: In(productIds),
+      },
+    });
+
+    const reviewedProductIds = new Set(
+      existingReviews.map((review) => review.productId),
+    );
+
+    // Filter out products that have already been reviewed
+    const reviewableProducts = order.orderItems
+      .filter((item) => !reviewedProductIds.has(item.productId))
+      .map((item) => ({
+        productId: item.product.productId,
+        productName: item.product.productName,
+        productImages: item.product.productImages,
+        priceAtTime: item.priceAtTime,
+        quantity: item.quantity,
+      }));
+
+    return ResponseHelper.success(
+      'Reviewable products retrieved successfully',
+      {
+        orderId: order.orderId,
+        orderStatus: order.status,
+        reviewableProducts,
+        totalProducts: order.orderItems.length,
+        reviewedCount: existingReviews.length,
+        remainingCount: reviewableProducts.length,
+      },
+    );
+  }
+
   private async hasUserPurchasedProduct(
     userId: string,
     productId: string,
@@ -194,7 +256,7 @@ export class ReviewsService {
       .leftJoin('order.customer', 'customer')
       .leftJoin('customer.user', 'user')
       .where('user.userId = :userId', { userId })
-      .andWhere('order.status = :status', { status: 'DELIVERED' })
+      .andWhere('order.status IN (:...statuses)', { statuses: ['DELIVERED', 'COMPLETED'] })
       .select(['order.orderId'])
       .getMany();
 

@@ -159,6 +159,57 @@ export class ReviewsController {
     return this.reviewsService.findByUser(user.userId);
   }
 
+  @Get('order/:orderId/reviewable')
+  @ApiOperation({ 
+    summary: 'Get reviewable products from an order',
+    description: 'Retrieve all products from a specific order that have not been reviewed yet. Order must be DELIVERED or COMPLETED.',
+  })
+  @ApiParam({
+    name: 'orderId',
+    description: 'Order UUID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Reviewable products from the order',
+    schema: {
+      example: {
+        orderId: '123e4567-e89b-12d3-a456-426614174000',
+        orderStatus: 'DELIVERED',
+        reviewableProducts: [
+          {
+            productId: '511fa772-4a30-4f85-91b0-25cc07655f26',
+            productName: 'Crème de la Mer',
+            productImages: ['https://example.com/image1.jpg', 'https://example.com/image2.jpg'],
+            priceAtTime: 150.00,
+            quantity: 1,
+          },
+        ],
+        totalProducts: 2,
+        reviewedCount: 1,
+        remainingCount: 1,
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Order is not yet delivered or completed',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Cannot view other users orders',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Order not found',
+  })
+  getReviewableProducts(
+    @Param('orderId') orderId: string,
+    @GetUser() user: User,
+  ) {
+    return this.reviewsService.getReviewableProductsByOrder(user.userId, orderId);
+  }
+
   @Get(':id')
   @ApiOperation({ 
     summary: 'Get a specific review',
