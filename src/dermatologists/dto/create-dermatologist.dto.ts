@@ -3,12 +3,17 @@ import {
   IsNumber,
   IsPositive,
   Min,
+  IsString,
 } from 'class-validator';
 
 export class CreateDermatologistDto {
   @IsOptional()
   @IsNumber()
   yearsOfExp?: number;
+
+  @IsOptional()
+  @IsString()
+  about?: string;
 
   @IsOptional()
   @IsNumber()
@@ -21,6 +26,10 @@ export class UpdateDermatologistDto {
   @IsOptional()
   @IsNumber()
   yearsOfExp?: number;
+
+  @IsOptional()
+  @IsString()
+  about?: string;
 
   @IsOptional()
   @IsNumber()
