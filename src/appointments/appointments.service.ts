@@ -1452,6 +1452,21 @@ export class AppointmentsService {
           amountToCredit,
           manager,
         );
+
+        // Create Payment Record
+        const paymentRepo = manager.getRepository(Payment);
+        const payment = paymentRepo.create({
+          paymentCode: `SKWSTAPP${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          paymentType: PaymentType.TOPUP,
+          amount: amountToCredit,
+          userId: doctorId,
+          transferContent: appointment.appointmentId,
+          status: PaymentStatus.COMPLETED,
+          paymentMethod: PaymentMethod.WALLET,
+          paidAt: new Date(),
+        });
+        await paymentRepo.save(payment);
+
         this.logger.log(
           `💰 Payout ${amountToCredit} to Doctor ${doctorId} for Appt ${appointment.appointmentId}`,
         );

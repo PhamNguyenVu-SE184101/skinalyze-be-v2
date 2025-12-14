@@ -27,7 +27,7 @@ async function bootstrap() {
     .setTitle('Skinalyze API')
     .setDescription(
       'The Skinalyze API documentation\n\n' +
-      '**[📥 Download Swagger JSON](/api/docs-json)**',
+        '**[📥 Download Swagger JSON](/api/docs-json)**',
     )
     .setVersion('1.0')
     .addTag('Products')

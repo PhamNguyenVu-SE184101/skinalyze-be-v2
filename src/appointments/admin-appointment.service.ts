@@ -14,6 +14,12 @@ import {
 import { UsersService } from '../users/users.service';
 import { CustomerSubscriptionService } from '../customer-subscription/customer-subscription.service';
 import { DisputeDecision, ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import {
+  Payment,
+  PaymentMethod,
+  PaymentStatus,
+  PaymentType,
+} from '../payments/entities/payment.entity';
 
 @Injectable()
 export class AdminAppointmentsService {
@@ -182,6 +188,21 @@ export class AdminAppointmentsService {
           payoutAmount,
           manager,
         );
+
+        // Create Payment Record
+        const paymentRepo = manager.getRepository(Payment);
+        const payment = paymentRepo.create({
+          paymentCode: `SKWSTAPP${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          paymentType: PaymentType.TOPUP,
+          amount: payoutAmount,
+          userId: appointment.dermatologist.user.userId,
+          transferContent: appointment.appointmentId,
+          status: PaymentStatus.COMPLETED,
+          paymentMethod: PaymentMethod.WALLET,
+          paidAt: new Date(),
+        });
+        await paymentRepo.save(payment);
+
         this.logger.log(
           `💰 Payout ${payoutAmount} (Rate ${((1 - feeRate) * 100).toFixed(2)}%) to Doctor Wallet.`,
         );
@@ -232,6 +253,20 @@ export class AdminAppointmentsService {
         doctorIncome,
         manager,
       );
+
+      // Create Payment Record
+      const paymentRepo = manager.getRepository(Payment);
+      const payment = paymentRepo.create({
+        paymentCode: `SKWSTAPP${Date.now()}${Math.floor(Math.random() * 1000)}`,
+        paymentType: PaymentType.TOPUP,
+        amount: doctorIncome,
+        userId: appointment.dermatologist.user.userId,
+        transferContent: appointment.appointmentId,
+        status: PaymentStatus.COMPLETED,
+        paymentMethod: PaymentMethod.WALLET,
+        paidAt: new Date(),
+      });
+      await paymentRepo.save(payment);
     }
 
     this.logger.log(
