@@ -46,7 +46,7 @@ export class ShippingLogsService {
         ShippingStatus.FAILED,
       ],
       [ShippingStatus.PICKED_UP]: [
-        ShippingStatus.IN_TRANSIT,
+        ShippingStatus.OUT_FOR_DELIVERY,
         ShippingStatus.FAILED,
         ShippingStatus.RETURNING,
       ],
@@ -1138,12 +1138,18 @@ export class ShippingLogsService {
           shippingLog.note = `Auto-synced from GHN at ${new Date().toISOString()} - GHN Status: ${ghnStatus}`;
 
           // Update delivery date if delivered
-          if (newStatus === ShippingStatus.DELIVERED && !shippingLog.deliveredDate) {
+          if (
+            newStatus === ShippingStatus.DELIVERED &&
+            !shippingLog.deliveredDate
+          ) {
             shippingLog.deliveredDate = new Date();
           }
 
           // Update return date if returned
-          if (newStatus === ShippingStatus.RETURNED && !shippingLog.returnedDate) {
+          if (
+            newStatus === ShippingStatus.RETURNED &&
+            !shippingLog.returnedDate
+          ) {
             shippingLog.returnedDate = new Date();
           }
 
@@ -1220,7 +1226,9 @@ export class ShippingLogsService {
         return ShippingStatus.RETURNED;
 
       default:
-        this.logger.warn(`Unknown GHN status: ${ghnStatus}, defaulting to PICKED_UP`);
+        this.logger.warn(
+          `Unknown GHN status: ${ghnStatus}, defaulting to PICKED_UP`,
+        );
         return ShippingStatus.PICKED_UP;
     }
   }
