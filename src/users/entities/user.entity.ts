@@ -47,7 +47,7 @@ export class User {
   @Column({ nullable: true })
   gender: boolean; // true: Male, false : Female
 
-  @Column('simple-array', { nullable: true })
+  @Column('json', { nullable: true })
   allergies: string[];
 
   @Column({

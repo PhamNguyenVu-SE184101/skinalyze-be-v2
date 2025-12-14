@@ -303,6 +303,7 @@ export class AuthController {
           type: 'string',
           example: 'https://example.com/photos/new-john.jpg',
         },
+        allergies: { type: 'array', items: { type: 'string' }, example: ['peanuts', 'shellfish'] },
       },
     },
     examples: {
@@ -318,6 +319,7 @@ export class AuthController {
           fullName: 'John Updated Doe',
           phone: '+84907654321',
           photoUrl: 'https://example.com/photos/new-john.jpg',
+          allergies: ['peanuts', 'shellfish'],
         },
       },
     },
