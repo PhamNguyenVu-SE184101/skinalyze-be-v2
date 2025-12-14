@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Payment, PaymentType, PaymentStatus, PaymentMethod } from '../payments/entities/payment.entity';
+import { User } from '../users/entities/user.entity';
 import { CreateReturnRequestDto } from './dto/create-return-request.dto';
 import {
   ReviewReturnRequestDto,
@@ -78,6 +80,10 @@ export class ReturnRequestsService {
     private shippingLogRepository: Repository<ShippingLog>,
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
+    @InjectRepository(Payment)
+    private paymentRepository: Repository<Payment>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
     private cloudinaryService: CloudinaryService,
   ) {}
 
@@ -335,6 +341,45 @@ export class ReturnRequestsService {
       );
     }
 
+    // Load order with payment to get refund amount
+    const order = await this.orderRepository.findOne({
+      where: { orderId: returnRequest.orderId },
+      relations: ['payment', 'customer', 'customer.user'],
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const refundAmount = order.payment?.amount || 0;
+    const userId = order.customer?.user?.userId;
+
+    if (!userId) {
+      throw new NotFoundException('User not found for refund');
+    }
+
+    // 💰 Process refund: Update user wallet balance
+    await this.userRepository.increment(
+      { userId },
+      'balance',
+      refundAmount,
+    );
+
+    // 📝 Create payment record for refund (topup type)
+    const paymentCode = `REFUND-${returnRequest.returnRequestId.substring(0, 8).toUpperCase()}`;
+    const refundPayment = this.paymentRepository.create({
+      paymentCode,
+      paymentType: PaymentType.TOPUP,
+      userId,
+      amount: refundAmount,
+      paidAmount: refundAmount,
+      paymentMethod: PaymentMethod.WALLET,
+      status: PaymentStatus.COMPLETED,
+      transferContent: `Tiền đơn hàng #${order.orderId.substring(0, 8)} - Hoàn trả do trả hàng`,
+    });
+    await this.paymentRepository.save(refundPayment);
+
+    // Update return request status
     returnRequest.status = ReturnRequestStatus.COMPLETED;
     returnRequest.returnedToWarehouseAt = new Date();
     if (completeDto.completionNote) {
@@ -350,7 +395,12 @@ export class ReturnRequestsService {
       { status: ShippingStatus.RETURNED },
     );
 
-    return this.returnRequestRepository.save(returnRequest);
+    const savedReturnRequest = await this.returnRequestRepository.save(returnRequest);
+
+    console.log(`✅ Refund processed: ${refundAmount} VND to user ${userId}`);
+    console.log(`📝 Refund payment created: ${paymentCode}`);
+
+    return savedReturnRequest;
   }
 
   // Customer cancel return request (only if PENDING)

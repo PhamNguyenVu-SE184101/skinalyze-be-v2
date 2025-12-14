@@ -149,63 +149,73 @@ export class CartService {
     productId: string,
     updateCartItemDto: UpdateCartItemDto,
   ): Promise<Cart> {
-    const { quantity } = updateCartItemDto;
+    try {
+      const { quantity } = updateCartItemDto;
 
-    if (quantity <= 0) {
-      throw new BadRequestException('Quantity must be greater than 0');
-    }
+      if (quantity <= 0) {
+        throw new BadRequestException('Quantity must be greater than 0');
+      }
 
-    const cart = await this.getCart(userId);
+      const cart = await this.getCart(userId);
+      console.log('[DEBUG] updateCartItem - Current cart:', { userId, cartItemsCount: cart.items.length });
 
-    const itemIndex = cart.items.findIndex(
-      (item) => item.productId === productId,
-    );
-
-    if (itemIndex === -1) {
-      throw new NotFoundException(
-        `Product with ID ${productId} not found in cart`,
+      const itemIndex = cart.items.findIndex(
+        (item) => item.productId === productId,
       );
-    }
 
-    const oldQuantity = cart.items[itemIndex].quantity;
-    const quantityDiff = quantity - oldQuantity;
-
-    // Adjust inventory reservation based on quantity change
-    if (quantityDiff > 0) {
-      // Need to reserve MORE stock
-      const reserveResult = await this.inventoryService.reserveStock(
-        productId,
-        quantityDiff,
-      );
-      if (!reserveResult.success) {
-        throw new BadRequestException(
-          `Cannot increase quantity. Only ${oldQuantity} available in stock.`,
+      if (itemIndex === -1) {
+        console.error('[DEBUG] updateCartItem - Product not found in cart:', { userId, productId });
+        throw new NotFoundException(
+          `Product with ID ${productId} not found in cart`,
         );
       }
-    } else if (quantityDiff < 0) {
-      // Need to release SOME stock
-      await this.inventoryService.releaseReservation(
-        productId,
-        Math.abs(quantityDiff),
+
+      const oldQuantity = cart.items[itemIndex].quantity;
+      const quantityDiff = quantity - oldQuantity;
+      console.log('[DEBUG] updateCartItem - Quantity change:', { oldQuantity, newQuantity: quantity, diff: quantityDiff });
+
+      // Adjust inventory reservation based on quantity change
+      if (quantityDiff > 0) {
+        // Need to reserve MORE stock
+        const reserveResult = await this.inventoryService.reserveStock(
+          productId,
+          quantityDiff,
+        );
+        if (!reserveResult.success) {
+          console.error('[DEBUG] updateCartItem - Insufficient stock:', { productId, quantityDiff, oldQuantity });
+          throw new BadRequestException(
+            `Cannot increase quantity. Only ${oldQuantity} available in stock.`,
+          );
+        }
+      } else if (quantityDiff < 0) {
+        // Need to release SOME stock
+        await this.inventoryService.releaseReservation(
+          productId,
+          Math.abs(quantityDiff),
+        );
+      }
+
+      // Update quantity
+      cart.items[itemIndex].quantity = quantity;
+
+      // Recalculate totals
+      cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+      cart.totalPrice = cart.items.reduce(
+        (sum, item) => sum + (item.price || 0) * item.quantity,
+        0,
       );
+      cart.updatedAt = new Date();
+
+      // ✅ Save to Redis with TTL
+      const cartKey = this.getCartKey(userId);
+      await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+      console.log('[DEBUG] updateCartItem - Cart updated successfully:', { userId, productId, newQuantity: quantity });
+
+      return cart;
+    } catch (error) {
+      console.error('[DEBUG] updateCartItem - Error:', { userId, productId, error: error.message });
+      throw error;
     }
-
-    // Update quantity
-    cart.items[itemIndex].quantity = quantity;
-
-    // Recalculate totals
-    cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
-    cart.totalPrice = cart.items.reduce(
-      (sum, item) => sum + (item.price || 0) * item.quantity,
-      0,
-    );
-    cart.updatedAt = new Date();
-
-    // ✅ Save to Redis with TTL
-    const cartKey = this.getCartKey(userId);
-    await this.cacheManager.set(cartKey, cart);
-
-    return cart;
   }
 
   async removeFromCart(userId: string, productId: string): Promise<Cart> {
