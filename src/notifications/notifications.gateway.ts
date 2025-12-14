@@ -47,26 +47,40 @@ export class NotificationsGateway
 
   async handleConnection(client: AuthenticatedSocket) {
     try {
+      this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      this.logger.log(`🔌 New client attempting to connect: ${client.id}`);
+
       // Extract JWT token from handshake
       const token =
         client.handshake.auth?.token ||
         client.handshake.headers?.authorization?.replace('Bearer ', '');
 
+      this.logger.debug(`Auth object:`, client.handshake.auth);
+      this.logger.debug(`Authorization header:`, client.handshake.headers?.authorization);
+      this.logger.debug(`Token found: ${token ? 'YES (length: ' + token.length + ')' : 'NO'}`);
+
       if (!token) {
-        this.logger.warn(`Client ${client.id} connected without token`);
+        this.logger.warn(`❌ Client ${client.id} connected without token - DISCONNECTING`);
+        this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         client.disconnect();
         return;
       }
 
+      this.logger.debug(`🔐 Attempting to verify JWT token...`);
+
       // Verify JWT token
       const payload = await this.jwtService.verifyAsync(token);
+
+      this.logger.debug(`✅ Token verified! Payload:`, payload);
+
       client.userId = payload.sub || payload.userId;
       client.user = payload;
 
-      this.logger.debug(`Token verified for user ${client.userId}`);
+      this.logger.debug(`👤 Extracted userId: ${client.userId}`);
 
       if (!client.userId) {
-        this.logger.warn(`Client ${client.id} has no userId in token`);
+        this.logger.warn(`❌ Client ${client.id} has no userId in token payload - DISCONNECTING`);
+        this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         client.disconnect();
         return;
       }
@@ -77,17 +91,28 @@ export class NotificationsGateway
       // Join user's personal room
       client.join(`user:${client.userId}`);
 
-      this.logger.log(`Client ${client.id} connected as user ${client.userId}`);
+      this.logger.log(`✅ Client ${client.id} successfully connected as user ${client.userId}`);
+      this.logger.log(`📊 Total connected users: ${this.connectedUsers.size}`);
+      this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
       // Note: Unread count will be sent via REST API or separate WebSocket event
       // Remove dependency on NotificationsService to avoid circular dependency
     } catch (error) {
-      this.logger.error(`Connection error for client ${client.id}:`, error);
+      this.logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      this.logger.error(`❌ CONNECTION ERROR for client ${client.id}`);
+      this.logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      this.logger.error(`Error name: ${error.name}`);
+      this.logger.error(`Error message: ${error.message}`);
+      if (error.stack) {
+        this.logger.error(`Stack trace: ${error.stack}`);
+      }
+      this.logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
       // Send error message to client before disconnecting
       client.emit('error', {
         message: 'Authentication failed. Please login again.',
         code: 'INVALID_TOKEN',
+        details: error.message,
       });
 
       client.disconnect();
