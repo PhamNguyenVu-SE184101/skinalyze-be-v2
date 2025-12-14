@@ -161,10 +161,41 @@ export class DermatologistsService {
     throw new InternalServerErrorException(message);
   }
 
-  /**
-   * ⭐️ HÀM MỚI: Lấy danh sách bệnh nhân của bác sĩ
-   * Logic: Bệnh nhân của tôi là người CÓ Appointment HOẶC CÓ TreatmentRoutine với tôi.
-   */
+  async getPatientCount(dermatologistId: string): Promise<number> {
+    try {
+      // Ensure dermatologist exists
+      await this.findByDermaId(dermatologistId);
+
+      return await this.customerRepository
+        .createQueryBuilder('customer')
+        .leftJoin(
+          'customer.appointments',
+          'appointment',
+          'appointment.dermatologistId = :dermatologistId AND appointment.appointmentStatus != :excludedStatus',
+          {
+            dermatologistId,
+            excludedStatus: AppointmentStatus.PENDING_PAYMENT,
+          },
+        )
+        .leftJoin(
+          'customer.treatmentRoutines',
+          'routine',
+          'routine.dermatologistId = :dermatologistId',
+          { dermatologistId },
+        )
+        .where(
+          new Brackets((qb) => {
+            qb.where('appointment.appointmentId IS NOT NULL').orWhere(
+              'routine.routineId IS NOT NULL',
+            );
+          }),
+        )
+        .getCount();
+    } catch (error) {
+      this.handleError(error, 'Failed to count patients');
+    }
+  }
+
   async getPatientsForDermatologist(
     userId: string,
     filters: GetMyPatientsDto,
@@ -185,7 +216,6 @@ export class DermatologistsService {
       const query = this.customerRepository
         .createQueryBuilder('customer')
         .leftJoinAndSelect('customer.user', 'user')
-        // Join các quan hệ liên quan đến bác sĩ này để filter
         .leftJoin(
           'customer.appointments',
           'appointment',
@@ -198,7 +228,6 @@ export class DermatologistsService {
           'routine.dermatologistId = :dermatologistId',
           { dermatologistId },
         )
-        // Filter: Phải có ít nhất 1 cuộc hẹn hoặc 1 lộ trình với bác sĩ này
         .where(
           new Brackets((qb) => {
             qb.where('appointment.appointmentId IS NOT NULL').orWhere(

@@ -170,6 +170,22 @@ export class DermatologistsController {
     );
   }
 
+  @Get(':id/patient-count')
+  @ApiOperation({
+    summary:
+      'Get total number of patients for a specific dermatologist (Public)',
+  })
+  @ApiOkResponse({
+    description: 'Total number of patients retrieved successfully',
+  })
+  async getPatientCount(@Param('id', new ParseUUIDPipe()) id: string) {
+    const count = await this.dermatologistsService.getPatientCount(id);
+    return ResponseHelper.success(
+      'Total patients count retrieved successfully',
+      { count },
+    );
+  }
+
   @Get('my-patients')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.DERMATOLOGIST)
