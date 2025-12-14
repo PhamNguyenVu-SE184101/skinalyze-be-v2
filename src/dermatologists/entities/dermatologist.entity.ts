@@ -25,6 +25,9 @@ export class Dermatologist {
   @Column({ type: 'int', nullable: true })
   yearsOfExp: number;
 
+  @Column({ type: 'text', nullable: true })
+  about: string;
+
   @Column({
     type: 'decimal',
     precision: 10,
