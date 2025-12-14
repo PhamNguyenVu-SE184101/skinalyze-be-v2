@@ -563,12 +563,25 @@ export class AuthController {
     );
   }
 
-  @Get('verify-email')
+  @Post('verify-email')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Verify email address',
     description:
       'Verify user email using token sent via email. Token is valid for 24 hours.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        token: {
+          type: 'string',
+          example: '550e8400-e29b-41d4-a716-446655440000',
+          description: 'Email verification token received in email',
+        },
+      },
+      required: ['token'],
+    },
   })
   @ApiResponse({
     status: 200,
