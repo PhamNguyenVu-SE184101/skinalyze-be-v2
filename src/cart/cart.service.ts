@@ -1,11 +1,11 @@
 import {
   Injectable,
-  Inject,
   NotFoundException,
   BadRequestException,
+  OnModuleDestroy,
 } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 import { Cart, CartItem } from './interfaces/cart-item.interface';
@@ -19,18 +19,50 @@ import {
 } from '../utils/location';
 
 @Injectable()
-export class CartService {
+export class CartService implements OnModuleDestroy {
+  private readonly redisClient: Redis;
+
   constructor(
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly configService: ConfigService,
     private readonly productsService: ProductsService,
     private readonly inventoryService: InventoryService,
     private readonly addressService: AddressService,
-  ) {}
+  ) {
+    // Initialize Redis client with configuration
+    this.redisClient = new Redis({
+      host: this.configService.get<string>('REDIS_HOST') || 'localhost',
+      port: this.configService.get<number>('REDIS_PORT') || 6379,
+      password: this.configService.get<string>('REDIS_PASSWORD') || undefined,
+      db: 0, // Use database 0
+    });
 
-  private getCartKey(userId: string): string {
-    return `cart:${userId}`;
+    // Handle Redis connection events
+    this.redisClient.on('error', (error) => {
+      console.error('Redis Client Error:', error);
+    });
+
+    this.redisClient.on('connect', () => {
+      console.log('Redis Client Connected');
+    });
   }
 
+  /**
+   * Cleanup Redis connection on module destroy
+   */
+  async onModuleDestroy() {
+    await this.redisClient.disconnect();
+  }
+
+  /**
+   * Generate Redis key with proper prefix
+   */
+  private getCartKey(userId: string): string {
+    return `skinalyze:cart:${userId}`;
+  }
+
+  /**
+   * Calculate final price after applying sale percentage
+   */
   private calculateFinalPrice(
     sellingPrice: number,
     salePercentage: number | null,
@@ -45,12 +77,15 @@ export class CartService {
     return Math.round(finalPrice);
   }
 
+  /**
+   * Get cart from Redis - Returns empty cart if not found
+   */
   async getCart(userId: string): Promise<Cart> {
     const cartKey = this.getCartKey(userId);
-    const cart = await this.cacheManager.get<Cart>(cartKey);
+    const cartData = await this.redisClient.get(cartKey);
 
-    if (!cart) {
-      // Return empty cart
+    if (!cartData) {
+      // Return empty cart structure
       return {
         userId,
         items: [],
@@ -60,20 +95,42 @@ export class CartService {
       };
     }
 
+    // Parse JSON string to Cart object
+    const cart = JSON.parse(cartData) as Cart;
+
+    // Convert date strings back to Date objects
+    cart.updatedAt = new Date(cart.updatedAt);
+    cart.items.forEach((item) => {
+      item.addedAt = new Date(item.addedAt);
+    });
+
     return cart;
   }
 
+  /**
+   * Save cart to Redis (permanently, no TTL)
+   */
+  private async saveCart(cart: Cart): Promise<void> {
+    const cartKey = this.getCartKey(cart.userId);
+    const cartData = JSON.stringify(cart);
+    await this.redisClient.set(cartKey, cartData);
+  }
+
+  /**
+   * Delete cart from Redis
+   */
+  private async deleteCart(userId: string): Promise<void> {
+    const cartKey = this.getCartKey(userId);
+    await this.redisClient.del(cartKey);
+  }
+
+  /**
+   * Add product to cart with inventory reservation
+   */
   async addToCart(userId: string, addToCartDto: AddToCartDto): Promise<Cart> {
     const { productId, quantity } = addToCartDto;
-    console.log('🔍 [DEBUG] Starting addToCart...', { userId, productId, quantity });
 
     try {
-      //redis connection testing
-      const testKey = `test:${Date.now()}`;
-      await this.cacheManager.set(testKey, 'test', 10000); // 10s
-      const testValue = await this.cacheManager.get(testKey);
-      console.log('[DEBUG] Redis connection test:', { testValue });
-
       // Verify product exists
       const product = await this.productsService.findOne(productId);
       if (!product) {
@@ -82,13 +139,12 @@ export class CartService {
 
       // Get current cart first to check if product exists
       const cart = await this.getCart(userId);
-      console.log('[DEBUG] Current cart:', cart);
 
       const existingItemIndex = cart.items.findIndex(
         (item) => item.productId === productId,
       );
 
-      //RESERVE INVENTORY (only reserve the NEW quantity being added)
+      // RESERVE INVENTORY (only reserve the NEW quantity being added)
       const reserveResult = await this.inventoryService.reserveStock(
         productId,
         quantity,
@@ -106,7 +162,7 @@ export class CartService {
       if (existingItemIndex > -1) {
         // Update quantity if product exists
         cart.items[existingItemIndex].quantity += quantity;
-        // Update price (trường hợp sale percentage thay đổi)
+        // Update price (in case sale percentage changed)
         cart.items[existingItemIndex].price = finalPrice;
         cart.items[existingItemIndex].originalPrice = product.sellingPrice;
         cart.items[existingItemIndex].salePercentage = product.salePercentage || 0;
@@ -119,7 +175,7 @@ export class CartService {
           salePercentage: product.salePercentage || 0,
           quantity,
           addedAt: new Date(),
-          selected: true, // Mặc định chọn khi thêm vào cart
+          selected: true, // Default selected when added to cart
         };
         cart.items.push(newItem);
       }
@@ -132,18 +188,19 @@ export class CartService {
       );
       cart.updatedAt = new Date();
 
-      // Save to Redis with TTL (24 hours)
-      const cartKey = this.getCartKey(userId);
-      await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours in milliseconds
-      console.log('[DEBUG] Cart saved to Redis with key:', cartKey, 'Items:', cart.items.length);
+      // Save to Redis
+      await this.saveCart(cart);
 
       return cart;
     } catch (error) {
-      console.error('[DEBUG] Error in addToCart:', error);
+      console.error('Error in addToCart:', error);
       throw error;
     }
   }
 
+  /**
+   * Update cart item quantity with inventory adjustment
+   */
   async updateCartItem(
     userId: string,
     productId: string,
@@ -157,14 +214,12 @@ export class CartService {
       }
 
       const cart = await this.getCart(userId);
-      console.log('[DEBUG] updateCartItem - Current cart:', { userId, cartItemsCount: cart.items.length });
 
       const itemIndex = cart.items.findIndex(
         (item) => item.productId === productId,
       );
 
       if (itemIndex === -1) {
-        console.error('[DEBUG] updateCartItem - Product not found in cart:', { userId, productId });
         throw new NotFoundException(
           `Product with ID ${productId} not found in cart`,
         );
@@ -172,7 +227,6 @@ export class CartService {
 
       const oldQuantity = cart.items[itemIndex].quantity;
       const quantityDiff = quantity - oldQuantity;
-      console.log('[DEBUG] updateCartItem - Quantity change:', { oldQuantity, newQuantity: quantity, diff: quantityDiff });
 
       // Adjust inventory reservation based on quantity change
       if (quantityDiff > 0) {
@@ -182,7 +236,6 @@ export class CartService {
           quantityDiff,
         );
         if (!reserveResult.success) {
-          console.error('[DEBUG] updateCartItem - Insufficient stock:', { productId, quantityDiff, oldQuantity });
           throw new BadRequestException(
             `Cannot increase quantity. Only ${oldQuantity} available in stock.`,
           );
@@ -206,18 +259,19 @@ export class CartService {
       );
       cart.updatedAt = new Date();
 
-      // ✅ Save to Redis with TTL
-      const cartKey = this.getCartKey(userId);
-      await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
-      console.log('[DEBUG] updateCartItem - Cart updated successfully:', { userId, productId, newQuantity: quantity });
+      // Save to Redis
+      await this.saveCart(cart);
 
       return cart;
     } catch (error) {
-      console.error('[DEBUG] updateCartItem - Error:', { userId, productId, error: error.message });
+      console.error('Error in updateCartItem:', error);
       throw error;
     }
   }
 
+  /**
+   * Remove item from cart and release inventory
+   */
   async removeFromCart(userId: string, productId: string): Promise<Cart> {
     const cart = await this.getCart(userId);
 
@@ -233,7 +287,7 @@ export class CartService {
 
     const item = cart.items[itemIndex];
 
-    // 🔥 RELEASE INVENTORY RESERVATION (simplified)
+    // Release inventory reservation
     await this.inventoryService.releaseReservation(
       item.productId,
       item.quantity,
@@ -250,20 +304,18 @@ export class CartService {
     );
     cart.updatedAt = new Date();
 
-    // ✅ Save to Redis
-    const cartKey = this.getCartKey(userId);
+    // Save to Redis or delete if empty
     if (cart.items.length === 0) {
-      // Delete cart if empty
-      await this.cacheManager.del(cartKey);
+      await this.deleteCart(userId);
     } else {
-      await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+      await this.saveCart(cart);
     }
 
     return cart;
   }
 
   /**
-   * ✅ Toggle select/unselect item trong cart
+   * Toggle select/unselect item in cart
    */
   async toggleSelectItem(
     userId: string,
@@ -281,15 +333,14 @@ export class CartService {
     item.selected = selected;
     cart.updatedAt = new Date();
 
-    // ✅ Save to Redis with TTL
-    const cartKey = this.getCartKey(userId);
-    await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+    // Save to Redis
+    await this.saveCart(cart);
 
     return cart;
   }
 
   /**
-   * ✅ Select/unselect tất cả items
+   * Select/unselect all items
    */
   async toggleSelectAll(userId: string, selected: boolean): Promise<Cart> {
     const cart = await this.getCart(userId);
@@ -299,27 +350,26 @@ export class CartService {
     });
     cart.updatedAt = new Date();
 
-    // ✅ Save to Redis with TTL
-    const cartKey = this.getCartKey(userId);
-    await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+    // Save to Redis
+    await this.saveCart(cart);
 
     return cart;
   }
 
   /**
-   * ✅ Lấy danh sách items đã chọn để checkout
+   * Get selected items for checkout
    */
   getSelectedItems(cart: Cart): CartItem[] {
     return cart.items.filter((item) => item.selected === true);
   }
 
   /**
-   * ✅ Xóa tất cả items đã chọn khỏi cart (sau khi checkout)
+   * Remove all selected items from cart (after checkout)
    */
   async removeSelectedItems(userId: string): Promise<Cart> {
     const cart = await this.getCart(userId);
 
-    // Giữ lại các items CHƯA được chọn
+    // Keep only unselected items
     cart.items = cart.items.filter((item) => item.selected !== true);
 
     // Recalculate totals
@@ -330,20 +380,21 @@ export class CartService {
     );
     cart.updatedAt = new Date();
 
-    // ✅ Save to Redis
-    const cartKey = this.getCartKey(userId);
+    // Save to Redis or delete if empty
     if (cart.items.length === 0) {
-      // Delete cart if empty
-      await this.cacheManager.del(cartKey);
+      await this.deleteCart(userId);
     } else {
-      await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+      await this.saveCart(cart);
     }
 
     return cart;
   }
 
+  /**
+   * Clear entire cart and release all reservations
+   */
   async clearCart(userId: string): Promise<void> {
-    // 🔥 RELEASE ALL RESERVATIONS before clearing
+    // Release all reservations before clearing
     const cart = await this.getCart(userId);
     if (cart && cart.items.length > 0) {
       for (const item of cart.items) {
@@ -354,17 +405,20 @@ export class CartService {
       }
     }
 
-    const cartKey = this.getCartKey(userId);
-    await this.cacheManager.del(cartKey);
+    // Delete cart from Redis
+    await this.deleteCart(userId);
   }
 
+  /**
+   * Get total item count in cart
+   */
   async getCartItemCount(userId: string): Promise<number> {
     const cart = await this.getCart(userId);
     return cart.totalItems;
   }
 
   /**
-   * Xóa các items cụ thể theo productIds
+   * Remove specific items by productIds
    */
   async removeItemsByProductIds(userId: string, productIds: string[]): Promise<Cart> {
     const cart = await this.getCart(userId);
@@ -373,7 +427,7 @@ export class CartService {
       throw new NotFoundException('Cart is empty');
     }
 
-    // Lọc bỏ items có productId trong danh sách
+    // Filter out items with productId in the list
     cart.items = cart.items.filter(
       item => !productIds.includes(item.productId)
     );
@@ -384,18 +438,15 @@ export class CartService {
       (sum, item) => sum + (item.price || 0) * item.quantity,
       0,
     );
+    cart.updatedAt = new Date();
 
-    const cartKey = this.getCartKey(userId);
-
+    // Save to Redis or delete if empty
     if (cart.items.length === 0) {
-      // Nếu cart rỗng → xóa luôn
-      await this.cacheManager.del(cartKey);
+      await this.deleteCart(userId);
       return { userId, items: [], totalPrice: 0, totalItems: 0, updatedAt: new Date() };
     }
 
-    // ✅ Lưu lại cart đã update với TTL
-    cart.updatedAt = new Date();
-    await this.cacheManager.set(cartKey, cart, 86400000); // 24 hours
+    await this.saveCart(cart);
     return cart;
   }
 }
