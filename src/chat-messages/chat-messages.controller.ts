@@ -56,8 +56,8 @@ export class ChatMessagesController {
         );
       }
 
-      // Validate file size (max 5MB)
-      const maxSize = 5 * 1024 * 1024; // 5MB
+      // Validate file size (max 10MB)
+      const maxSize = 10 * 1024 * 1024; // 10MB
       if (image.size > maxSize) {
         throw new BadRequestException('File size must not exceed 5MB');
       }
