@@ -328,59 +328,35 @@ export class SkinAnalysisService {
     customerId: string,
     notes?: string,
   ): Promise<SkinAnalysis> {
-    this.logger.log(`Starting disease detection for: ${customerId}`);
+    this.logger.log(`Starting SEQUENTIAL disease detection for: ${customerId}`);
 
-    // ✅ 5. Get User Context
+    // 1. Get User Context (Giữ nguyên)
     const customer = await this.validateCustomer(customerId);
     const user = customer.user;
-
     const age = this.calculateAge(user.dob);
+    let genderStr = user.gender === true ? 'Male' : user.gender === false ? 'Female' : 'Other';
+    const allergiesStr = user.allergies && Array.isArray(user.allergies) ? user.allergies.join(', ') : '';
 
-    let genderStr = 'Other';
-    if (user.gender === true) genderStr = 'Male';
-    else if (user.gender === false) genderStr = 'Female';
-
-    const allergiesStr =
-      user.allergies && Array.isArray(user.allergies)
-        ? user.allergies.join(', ')
-        : '';
-
-    this.logger.debug(
-      `User Context: Age=${age}, Gender=${genderStr}, Allergies=${allergiesStr}`,
-    );
-
-    if (notes === 'facial') {
-      const hasFace = await this.detectFace(file);
-      if (!hasFace) {
-        throw new BadRequestException(
-          'No face detected. Please upload a clear image of a face for facial analysis.',
-        );
-      }
-    }
-
-    // 6. Upload Image
+    // 2. Upload Image (Giữ nguyên)
     const uploadResult = await this.cloudinaryService.uploadImage(
       file,
       'skin-analysis/disease-detection',
     );
     const imageUrl = uploadResult.secure_url;
 
-    // 7. Run AI Analysis
-    const [classificationResult, segmentationResult] = await Promise.all([
-      this.classifyDisease(file, notes, age as number, genderStr, allergiesStr), // ✅ Pass metadata
-      this.segmentDisease(file),
-    ]);
+    // 3. Call AI Service (CHỈ GỌI 1 API duy nhất)
+    // API này giờ đã làm cả Segmentation -> Classification
+    const analysisResult = await this.classifyDisease(file, notes, age as number, genderStr, allergiesStr);
 
-    this.logger.debug(
-      `AI Classification Response: ${JSON.stringify(classificationResult)}`,
-    );
-
-    // 8. Process Mask
+    // 4. Xử lý Mask (Lấy từ kết quả analysisResult trả về)
     let maskUrls: string[] | null = null;
-    if (segmentationResult?.mask) {
-      this.logger.debug('Uploading segmentation mask to Cloudinary...');
+    
+    // Kiểm tra xem backend Python trả về key nào (mask_base64 hay mask)
+    // Trong code Python sửa đổi ở trên, tôi đặt tên là "mask_base64"
+    if (analysisResult?.mask_base64) {
+      this.logger.debug('Uploading segmentation mask from pipeline to Cloudinary...');
       const uploadedMaskUrl = await this.uploadBase64ToCloudinary(
-        segmentationResult.mask,
+        analysisResult.mask_base64,
         'skin-analysis/masks',
       );
       if (uploadedMaskUrl) {
@@ -388,25 +364,23 @@ export class SkinAnalysisService {
       }
     }
 
-    // ✅ 9. Process Products and Reasons
+    // 5. Xử lý Products (Giữ nguyên)
     let recommendedProductsData: any = null;
-
     if (
-      classificationResult.product_suggestions &&
-      Array.isArray(classificationResult.product_suggestions) &&
-      classificationResult.product_suggestions.length > 0
+      analysisResult.product_suggestions &&
+      Array.isArray(analysisResult.product_suggestions) &&
+      analysisResult.product_suggestions.length > 0
     ) {
-      // classificationResult.product_suggestions is [{ product_name, reason }]
       recommendedProductsData = await this.matchProductsWithReasons(
-        classificationResult.product_suggestions,
+        analysisResult.product_suggestions,
       );
     }
 
-    // 10. Map Disease
-    const detectedDisease = classificationResult.predicted_class;
+    // 6. Map Disease (Giữ nguyên)
+    const detectedDisease = analysisResult.predicted_class;
     const skinConditions = this.mapDiseaseToConditions(detectedDisease);
 
-    // 11. Save to DB
+    // 7. Save DB (Giữ nguyên)
     const skinAnalysisData: DeepPartial<SkinAnalysis> = {
       customerId,
       source: 'AI_SCAN',
@@ -414,20 +388,19 @@ export class SkinAnalysisService {
       notes: notes ?? null,
       aiDetectedDisease: detectedDisease,
       aiDetectedCondition: skinConditions ? skinConditions.join(', ') : null,
-      confidence: classificationResult.confidence,
-      allPredictions: classificationResult.all_predictions,
-      aiRecommendedProducts: recommendedProductsData, // ✅ Saves [{productId, reason}, ...]
-      mask: maskUrls,
+      confidence: analysisResult.confidence,
+      allPredictions: analysisResult.all_predictions,
+      aiRecommendedProducts: recommendedProductsData,
+      mask: maskUrls, // Lưu URL mask đã upload
     };
 
     const entity = this.skinAnalysisRepository.create(skinAnalysisData);
     const savedAnalysis = await this.skinAnalysisRepository.save(entity);
 
     this.logger.log(`Disease analysis completed: ${savedAnalysis.analysisId}`);
-
     return savedAnalysis;
   }
-
+  
   async findOne(analysisId: string): Promise<SkinAnalysis> {
     const analysis = await this.skinAnalysisRepository.findOne({
       where: { analysisId },
