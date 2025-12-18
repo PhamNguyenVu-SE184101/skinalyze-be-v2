@@ -87,7 +87,7 @@ export class SkinAnalysisController {
     @UploadedFile(
       new ParseFilePipe({
         validators: [
-          new MaxFileSizeValidator({ maxSize: 15 * 1024 * 1024 }), // 15MB
+          new MaxFileSizeValidator({ maxSize: 50 * 1024 * 1024 }), // 50MB
           new FileTypeValidator({ fileType: /(jpg|jpeg|png)$/ }),
         ],
       }),
