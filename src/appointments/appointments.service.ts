@@ -771,18 +771,26 @@ export class AppointmentsService {
     userId: string,
     appointmentId: string,
   ): Promise<string> {
-    const dermatologist = await this.dermatologistsService.findByUserId(userId);
-
     const appointment = await this.appointmentRepository.findOne({
-      where: {
-        appointmentId,
-        dermatologist: { dermatologistId: dermatologist.dermatologistId },
-      },
+      where: { appointmentId },
+      relations: [
+        'dermatologist',
+        'dermatologist.user',
+        'customer',
+        'customer.user',
+      ],
     });
 
     if (!appointment) {
-      throw new NotFoundException(
-        'Appointment not found or you do not have permission.',
+      throw new NotFoundException('Appointment not found.');
+    }
+
+    const isDermatologist = appointment.dermatologist?.user?.userId === userId;
+    const isCustomer = appointment.customer?.user?.userId === userId;
+
+    if (!isDermatologist && !isCustomer) {
+      throw new ForbiddenException(
+        'You are not authorized to generate a meeting link for this appointment.',
       );
     }
 

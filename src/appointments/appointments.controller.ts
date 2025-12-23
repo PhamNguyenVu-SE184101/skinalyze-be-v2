@@ -316,7 +316,7 @@ export class AppointmentsController {
   }
 
   @Patch(':appointmentId/generate-meet-link')
-  @Roles(UserRole.DERMATOLOGIST)
+  @Roles(UserRole.DERMATOLOGIST, UserRole.CUSTOMER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Manually generate a Google Meet link' })
   async generateManualMeetLink(
