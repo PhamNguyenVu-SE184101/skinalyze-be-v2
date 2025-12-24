@@ -5,6 +5,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import Redis from 'ioredis';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
@@ -21,6 +22,7 @@ import {
 @Injectable()
 export class CartService implements OnModuleDestroy {
   private readonly redisClient: Redis;
+  private readonly CART_TTL_SECONDS = 300; // 5 minutes
 
   constructor(
     private readonly configService: ConfigService,
@@ -108,12 +110,14 @@ export class CartService implements OnModuleDestroy {
   }
 
   /**
-   * Save cart to Redis (permanently, no TTL)
+   * Save cart to Redis with 5-minute TTL
+   * After 5 minutes of inactivity, cart will be automatically deleted
    */
   private async saveCart(cart: Cart): Promise<void> {
     const cartKey = this.getCartKey(cart.userId);
     const cartData = JSON.stringify(cart);
-    await this.redisClient.set(cartKey, cartData);
+    // Set cart with 5-minute expiration (300 seconds)
+    await this.redisClient.set(cartKey, cartData, 'EX', this.CART_TTL_SECONDS);
   }
 
   /**
@@ -122,6 +126,65 @@ export class CartService implements OnModuleDestroy {
   private async deleteCart(userId: string): Promise<void> {
     const cartKey = this.getCartKey(userId);
     await this.redisClient.del(cartKey);
+  }
+
+  /**
+   * Remove TTL from cart (make it persistent)
+   * Called when user successfully checks out
+   */
+  async removeTTL(userId: string): Promise<void> {
+    const cartKey = this.getCartKey(userId);
+    await this.redisClient.persist(cartKey);
+  }
+
+  /**
+   * Scheduled job: Clean up expired carts and release inventory
+   * Runs every minute to check for carts about to expire
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async cleanupExpiredCarts(): Promise<void> {
+    try {
+      // Scan for all cart keys
+      const pattern = 'skinalyze:cart:*';
+      const keys = await this.redisClient.keys(pattern);
+
+      for (const key of keys) {
+        // Check TTL for each cart
+        const ttl = await this.redisClient.ttl(key);
+
+        // If TTL is less than 60 seconds (about to expire), release inventory
+        if (ttl > 0 && ttl < 60) {
+          const cartData = await this.redisClient.get(key);
+          if (cartData) {
+            const cart = JSON.parse(cartData) as Cart;
+
+            // Release all inventory reservations
+            for (const item of cart.items) {
+              try {
+                await this.inventoryService.releaseReservation(
+                  item.productId,
+                  item.quantity,
+                );
+                console.log(
+                  `[Cart Cleanup] Released inventory for product ${item.productId}, quantity: ${item.quantity}`,
+                );
+              } catch (error) {
+                console.error(
+                  `[Cart Cleanup] Failed to release inventory for product ${item.productId}:`,
+                  error,
+                );
+              }
+            }
+
+            // Delete cart immediately after releasing inventory
+            await this.redisClient.del(key);
+            console.log(`[Cart Cleanup] Deleted expired cart: ${key}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[Cart Cleanup] Error during cleanup:', error);
+    }
   }
 
   /**
@@ -165,7 +228,8 @@ export class CartService implements OnModuleDestroy {
         // Update price (in case sale percentage changed)
         cart.items[existingItemIndex].price = finalPrice;
         cart.items[existingItemIndex].originalPrice = product.sellingPrice;
-        cart.items[existingItemIndex].salePercentage = product.salePercentage || 0;
+        cart.items[existingItemIndex].salePercentage =
+          product.salePercentage || 0;
       } else {
         const newItem: CartItem = {
           productId,
@@ -181,7 +245,10 @@ export class CartService implements OnModuleDestroy {
       }
 
       // Recalculate totals
-      cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+      cart.totalItems = cart.items.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
       cart.totalPrice = cart.items.reduce(
         (sum, item) => sum + (item.price || 0) * item.quantity,
         0,
@@ -252,7 +319,10 @@ export class CartService implements OnModuleDestroy {
       cart.items[itemIndex].quantity = quantity;
 
       // Recalculate totals
-      cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+      cart.totalItems = cart.items.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
       cart.totalPrice = cart.items.reduce(
         (sum, item) => sum + (item.price || 0) * item.quantity,
         0,
@@ -420,7 +490,10 @@ export class CartService implements OnModuleDestroy {
   /**
    * Remove specific items by productIds
    */
-  async removeItemsByProductIds(userId: string, productIds: string[]): Promise<Cart> {
+  async removeItemsByProductIds(
+    userId: string,
+    productIds: string[],
+  ): Promise<Cart> {
     const cart = await this.getCart(userId);
 
     if (!cart.items || cart.items.length === 0) {
@@ -429,7 +502,7 @@ export class CartService implements OnModuleDestroy {
 
     // Filter out items with productId in the list
     cart.items = cart.items.filter(
-      item => !productIds.includes(item.productId)
+      (item) => !productIds.includes(item.productId),
     );
 
     // Recalculate totals
@@ -443,7 +516,13 @@ export class CartService implements OnModuleDestroy {
     // Save to Redis or delete if empty
     if (cart.items.length === 0) {
       await this.deleteCart(userId);
-      return { userId, items: [], totalPrice: 0, totalItems: 0, updatedAt: new Date() };
+      return {
+        userId,
+        items: [],
+        totalPrice: 0,
+        totalItems: 0,
+        updatedAt: new Date(),
+      };
     }
 
     await this.saveCart(cart);
