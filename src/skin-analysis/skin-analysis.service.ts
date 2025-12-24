@@ -251,7 +251,7 @@ export class SkinAnalysisService {
       const response = await axios.post(
         `${this.aiServiceUrl}/api/classification-disease`,
         formData,
-        { headers: { ...formData.getHeaders() } },
+        { headers: { ...formData.getHeaders() }, timeout: 60000 }, // 60 seconds timeout
       );
       return response.data;
     } catch (error) {
